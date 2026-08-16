@@ -1,0 +1,151 @@
+{
+  "project_name": "META CVLN OS",
+  "theme_strategy": "dark_premium_only",
+  "archetype": "High-Contrast Premium Admin",
+  "description": "Internal enterprise operating system prioritizing CLARITY, CONTEXT, and ACTION. Dense but legible, highly professional, sober, and decision-oriented.",
+  "typography": {
+    "fonts": {
+      "headings": "Chivo",
+      "body": "IBM Plex Sans",
+      "mono": "IBM Plex Mono",
+      "forbidden": ["Inter", "Roboto", "Space Grotesk"]
+    },
+    "hierarchy": {
+      "h1": "text-3xl sm:text-4xl tracking-tight font-semibold",
+      "h2": "text-xl sm:text-2xl tracking-tight font-medium",
+      "h3": "text-lg sm:text-xl font-medium",
+      "body": "text-sm sm:text-base leading-relaxed text-slate-300",
+      "kpi_data": "font-mono text-2xl sm:text-3xl font-semibold tracking-tighter",
+      "labels": "text-xs font-mono uppercase tracking-[0.15em] text-slate-400"
+    },
+    "rules": [
+      "Use IBM Plex Mono for all financial numbers, KPIs, timestamps, and audit logs.",
+      "Use uppercase labels with tracking for section headers and statuses to enhance the premium systemic feel.",
+      "Never center-align paragraphs, inputs, or dense content."
+    ]
+  },
+  "colors": {
+    "css_variables": {
+      "--background": "230 25% 4%",
+      "--foreground": "210 20% 98%",
+      "--card": "230 18% 9%",
+      "--card-foreground": "210 20% 98%",
+      "--popover": "230 18% 9%",
+      "--popover-foreground": "210 20% 98%",
+      "--primary": "263 70% 50%",
+      "--primary-foreground": "210 20% 98%",
+      "--secondary": "38 92% 50%",
+      "--secondary-foreground": "230 25% 4%",
+      "--muted": "230 15% 15%",
+      "--muted-foreground": "215 15% 65%",
+      "--accent": "45 93% 47%",
+      "--accent-foreground": "230 25% 4%",
+      "--destructive": "0 84% 60%",
+      "--destructive-foreground": "210 20% 98%",
+      "--border": "230 15% 18%",
+      "--input": "230 15% 18%",
+      "--ring": "263 70% 50%",
+      "--radius": "0.25rem"
+    },
+    "palette_hex": {
+      "background_base": "#08090C",
+      "surface_card": "#13141C",
+      "primary_violet": "#7C3AED",
+      "primary_violet_hover": "#6D28D9",
+      "accent_gold": "#F59E0B",
+      "accent_gold_hover": "#D97706",
+      "text_primary": "#FFFFFF",
+      "text_secondary": "#9CA3AF",
+      "border_subtle": "#252633"
+    },
+    "rules": [
+      "No pure black (#000000). Use deep tinted navy/black for backgrounds.",
+      "Gold (#F59E0B) is strictly for emphasizing CTAs, alerts, and critical actions. Do not use for large fills.",
+      "Violet (#7C3AED) is for primary active states, selected items, and structural highlights.",
+      "Ensure minimum 4.5:1 contrast ratio for all text.",
+      "No large gradient backgrounds. Maintain a solid, dense, decision-focused look."
+    ]
+  },
+  "spacing_and_layout": {
+    "grid_system": "Bento Grid Protocol (MODE B: High Density Grid)",
+    "rules": [
+      "Base Grid: grid-cols-1 lg:grid-cols-4 or grid-cols-12 for fine-grained control.",
+      "Gap Strategy: Tight (gap-4 to gap-6).",
+      "Card Padding: p-4 to p-6 inside cards. Use tight density to maximize information display.",
+      "Multi-panel layout: Utilize h-full to stretch children, ensuring strict optical alignment.",
+      "Left Sidebar Navigation: Fixed w-64 (or collapsed w-16). Main content should occupy the remaining width."
+    ]
+  },
+  "components": {
+    "surfaces": {
+      "cards": "Use 'Flat Solid' strategy. bg-[#13141C] with a subtle 1px border border-[#252633] and minimal shadow. border-radius: 4px (rounded). NO glassmorphism for this dense data OS.",
+      "headers": "Solid background with a 1px border-b. No transparent headers.",
+      "modals_dropdowns": "DO NOT use transparent backgrounds. Must have solid background (bg-card) with z-50 and border."
+    },
+    "interactive": {
+      "buttons": "Sharp or slightly rounded (4px). Primary actions in Violet or Gold. Text must change on hover. Hover states must be explicitly defined (e.g. hover:bg-violet-700 hover:text-white).",
+      "forms": "Use Shadcn customized components. Input backgrounds must match the card or be slightly darker.",
+      "data_tables": "Dense rows. Text left-aligned except for numbers/currency which are right-aligned. Hover effects on rows (bg-white/5)."
+    },
+    "charts": {
+      "library": "recharts",
+      "styling": "Use primary violet and accent gold for data points. Strip out heavy grid lines, keep axes minimal. For timelines, use AreaChart with subtle opacity gradients. Use Shadcn chart components."
+    }
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "usage": "Use Duotone or Regular weights. Keep icons small (16px - 20px) to match dense UI."
+  },
+  "media": {
+    "image_urls": {
+      "avatar_male": {
+        "url": "https://images.unsplash.com/photo-1560250097-0b93528c311a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjV8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBjb3Jwb3JhdGUlMjBwb3J0cmFpdHxlbnwwfHx8fDE3ODY4NzMwNjZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Professional male avatar for People OS / Profile."
+      },
+      "avatar_female": {
+        "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjV8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBjb3Jwb3JhdGUlMjBwb3J0cmFpdHxlbnwwfHx8fDE3ODY4NzMwNjZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Professional female avatar for Work Graph / Profile."
+      },
+      "background_login": {
+        "url": "https://images.unsplash.com/photo-1638272181967-7d3772a91265?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzh8MHwxfHNlYXJjaHwyfHxkYXJrJTIwcHVycGxlJTIwYWJzdHJhY3QlMjB0ZXh0dXJlfGVufDB8fHx8MTc4Njg3MzA2Nnww&ixlib=rb-4.1.0&q=85",
+        "description": "Subtle dark purple abstract background, only use at low opacity behind login or command center hero areas."
+      }
+    }
+  },
+  "motion": {
+    "rules": [
+      "Minimalist and functional. Use micro-interactions (200ms ease) for hover and active states.",
+      "Entrance animations for data lists: subtle staggered fade-in via Framer Motion.",
+      "No excessive scaling or bouncy animations. It is an enterprise OS."
+    ]
+  },
+  "accessibility": {
+    "rules": [
+      "Focus states must use ring-2 ring-violet-500 offset-2 offset-black.",
+      "Color-blind friendly data visualization.",
+      "All interactive elements must be keyboard accessible."
+    ]
+  },
+  "testing": {
+    "rules": [
+      "All interactive and key informational elements MUST include a 'data-testid' attribute (e.g., data-testid='approve-decision-btn').",
+      "Kebab-case, role-based naming."
+    ]
+  },
+  "instructions_to_main_agent": [
+    "CRITICAL: Generate .js files, NOT .tsx files.",
+    "Do not use transparent backgrounds for any modals, dropdowns, or floating navigation. They must have solid dark backgrounds.",
+    "Ensure the Command Center, People OS, Finance OS, Legal OS, and CVL Brain panels are constructed as dense grid modules.",
+    "Every recommended action in the OS must visibly show 'Approve', 'Reject', or 'Escalate' pathways using the gold accent.",
+    "Install required dependencies: yarn add recharts @phosphor-icons/react framer-motion sonner lucide-react",
+    "Use 'sonner' for toast notifications."
+  ],
+  "universal_guidelines_for_main_agent": [
+    "Avoid generic 'AI slop' aesthetic. The UI must feel authoritative, tactile, and highly deliberate.",
+    "Implement the 'Bento Grid Protocol' accurately. Overcome standard boxy layouts by varying span sizes for KPIs vs. Charts.",
+    "Create depth through layering surfaces (e.g., sidebar darker than main content card), not heavy drop shadows.",
+    "Do not use generic emoji characters for icons; use @phosphor-icons/react.",
+    "No universal transition (transition: all). Use specific properties (transition-colors, transition-transform).",
+    "Never center-align the main App container (.App { text-align: center; } is strictly forbidden)."
+  ]
+}
