@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, EmailStr
 
 from seed_data import build_seed_data
 from registry_data import repositories_docs
+from contracts import contracts_catalog, ALL_CONTRACTS
 
 # ------------------------------------------------------------------
 # Config
@@ -873,6 +874,103 @@ async def create_feedback(body: FeedbackBody, user: dict = Depends(get_current_u
 @api.get("/feedback")
 async def list_feedback(user: dict = Depends(get_current_user)):
     return await db.feedback.find({}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+
+
+# ------------------------------------------------------------------
+# 5 versioned contracts — the API contract of the ecosystem
+# ------------------------------------------------------------------
+@api.get("/contracts")
+async def get_contracts(user: dict = Depends(get_current_user)):
+    return {"contracts": contracts_catalog(), "count": len(ALL_CONTRACTS)}
+
+
+@api.get("/contracts/{key}")
+async def get_contract(key: str, user: dict = Depends(get_current_user)):
+    if key not in ALL_CONTRACTS:
+        raise HTTPException(404, f"Unknown contract '{key}'")
+    catalog = {c["key"]: c for c in contracts_catalog()}
+    return catalog[key]
+
+
+# ------------------------------------------------------------------
+# Typed cross-repo adapters (P1) — one small function per capability
+# ------------------------------------------------------------------
+class TypedCall(BaseModel):
+    inputs: Dict[str, Any] = Field(default_factory=dict)
+
+
+async def _call_repo(repo_key: str, path: str, method: str = "POST",
+                      body: Optional[dict] = None) -> dict:
+    """Generic typed call: fetch preview_url + auth from Registry, POST/GET."""
+    import asyncio
+    import requests as _rq
+    import time
+    repo = await db.repositories.find_one({"key": repo_key})
+    if not repo or not repo.get("preview_url"):
+        return {"status": "NO_ENDPOINT", "repo": repo_key,
+                "hint": f"Configure preview_url for {repo_key} in Registry"}
+    url = repo["preview_url"].rstrip("/") + path
+    headers = {"Content-Type": "application/json"}
+    if repo.get("auth_type") == "api_key" and repo.get("api_key"):
+        headers["X-API-Key"] = repo["api_key"]
+    elif repo.get("auth_type") == "bearer" and repo.get("api_key"):
+        headers["Authorization"] = f"Bearer {repo['api_key']}"
+
+    def _do():
+        t0 = time.time()
+        try:
+            if method == "POST":
+                r = _rq.post(url, headers=headers, json=body or {}, timeout=10)
+            else:
+                r = _rq.get(url, headers=headers, timeout=10)
+            ms = int((time.time() - t0) * 1000)
+            try:
+                data = r.json()
+            except Exception:
+                data = {"raw": r.text[:400]}
+            return {"http": r.status_code, "ms": ms, "data": data}
+        except Exception as e:
+            return {"http": None, "ms": int((time.time() - t0) * 1000),
+                    "error": str(e)[:200]}
+
+    return await asyncio.to_thread(_do)
+
+
+@api.post("/adapters/labelos/push_catalogue")
+async def labelos_push_catalogue(body: TypedCall, user: dict = Depends(get_current_user)):
+    if user["role"] not in ("admin", "cfo", "ops_lead"):
+        raise HTTPException(403, "cfo or ops_lead required")
+    trace_id = str(uuid.uuid4())
+    res = await _call_repo("fms_os", "/api/labelos/push_catalogue",
+                            body={**body.inputs, "trace_id": trace_id,
+                                   "issuer": "meta-cvln-os"})
+    await write_evidence(user, "adapter.labelos.push_catalogue", "adapter", trace_id,
+                          input_data=body.inputs, output_data=res)
+    return {"trace_id": trace_id, "capability": "labelos.push_catalogue", **res}
+
+
+@api.post("/adapters/wallet/transaction")
+async def wallet_transaction(body: TypedCall, user: dict = Depends(get_current_user)):
+    if user["role"] not in ("admin", "cfo"):
+        raise HTTPException(403, "cfo required for wallet transactions")
+    trace_id = str(uuid.uuid4())
+    res = await _call_repo("cvln_wallet", "/api/wallet/transaction",
+                            body={**body.inputs, "trace_id": trace_id,
+                                   "issuer": "meta-cvln-os"})
+    await write_evidence(user, "adapter.wallet.transaction", "adapter", trace_id,
+                          input_data=body.inputs, output_data=res, approval="pending")
+    return {"trace_id": trace_id, "capability": "wallet.transaction", **res}
+
+
+@api.post("/adapters/laurentia/briefing")
+async def laurentia_briefing(body: TypedCall, user: dict = Depends(get_current_user)):
+    trace_id = str(uuid.uuid4())
+    res = await _call_repo("laurentia", "/api/briefing",
+                            body={**body.inputs, "trace_id": trace_id,
+                                   "issuer": "meta-cvln-os"})
+    await write_evidence(user, "adapter.laurentia.briefing", "adapter", trace_id,
+                          input_data=body.inputs, output_data=res)
+    return {"trace_id": trace_id, "capability": "laurentia.briefing", **res}
 
 
 # ------------------------------------------------------------------

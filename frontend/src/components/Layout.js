@@ -12,11 +12,14 @@ const NAV = [
   { to: "/knowledge", label: "Knowledge OS", scope: "knowledge_os" },
   { to: "/ecosystem", label: "Work Graph", scope: "work_graph" },
   { to: "/registry", label: "Registry", scope: "registry" },
+  { to: "/contracts", label: "Contracts", scope: "contracts" },
+  { to: "/adapters", label: "Adapters", scope: "adapters" },
   { to: "/agents", label: "Agent Factory", scope: "agent_factory" },
   { to: "/decisions", label: "Decision System", scope: "decisions" },
   { to: "/evidence", label: "Evidence & Audit", scope: "evidence" },
   { to: "/notarizations", label: "Notary Ledger", scope: "notarizations" },
   { to: "/weekly-report", label: "Weekly Report", scope: "weekly_report" },
+  { to: "/feedback", label: "Feedback", scope: "feedback" },
   { to: "/brain", label: "CVL Brain", scope: "brain" },
 ];
 

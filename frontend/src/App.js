@@ -11,11 +11,14 @@ import OpsOS from "./pages/OpsOS";
 import KnowledgeOS from "./pages/KnowledgeOS";
 import Ecosystem from "./pages/Ecosystem";
 import Registry from "./pages/Registry";
+import Contracts from "./pages/Contracts";
+import Adapters from "./pages/Adapters";
 import AgentFactory from "./pages/AgentFactory";
 import DecisionSystem from "./pages/DecisionSystem";
 import EvidenceAudit from "./pages/EvidenceAudit";
 import Notarizations from "./pages/Notarizations";
 import WeeklyReport from "./pages/WeeklyReport";
+import Feedback from "./pages/Feedback";
 import MetaPublic from "./pages/MetaPublic";
 import MetaCommercial from "./pages/MetaCommercial";
 import AuditPublic from "./pages/AuditPublic";
@@ -60,11 +63,14 @@ export default function App() {
             <Route path="/knowledge" element={<KnowledgeOS />} />
             <Route path="/ecosystem" element={<Ecosystem />} />
             <Route path="/registry" element={<Registry />} />
+            <Route path="/contracts" element={<Contracts />} />
+            <Route path="/adapters" element={<Adapters />} />
             <Route path="/agents" element={<AgentFactory />} />
             <Route path="/decisions" element={<DecisionSystem />} />
             <Route path="/evidence" element={<EvidenceAudit />} />
             <Route path="/notarizations" element={<Notarizations />} />
             <Route path="/weekly-report" element={<WeeklyReport />} />
+            <Route path="/feedback" element={<Feedback />} />
             <Route path="/brain" element={<CVLBrain />} />
           </Route>
         </Routes>

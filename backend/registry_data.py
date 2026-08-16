@@ -175,7 +175,7 @@ REPOSITORIES = [
         ],
         "tiers": ["Free", "Creator (15€/mo)", "Infinite (39€/mo)", "Enterprise"],
         "license": "Business Source License 1.1",
-        "preview_url": None,
+        "preview_url": "https://emergent-ai-238.preview.emergentagent.com",
         "auth_type": "api_key",
         "principles": [
             "Souveraineté sensorielle",
