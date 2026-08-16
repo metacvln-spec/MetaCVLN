@@ -1,0 +1,8 @@
+crons:
+  - name: registry-ping
+    description: "Hourly ping of every registered CVLN repo — updates status + notarizes"
+    cron: "15 * * * *"
+    endpoint: "{{BASE_URL}}/api/cron/registry-ping-all"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

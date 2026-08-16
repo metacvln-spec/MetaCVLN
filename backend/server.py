@@ -284,12 +284,35 @@ async def config_repository(repo_id: str, body: RegistryConfigBody,
 
 @api.post("/registry/repositories/{repo_id}/ping")
 async def ping_repository(repo_id: str, user: dict = Depends(get_current_user)):
+    result = await _ping_repo(repo_id, actor=user)
+    return result
+
+
+@api.get("/registry/repositories/{repo_id}/history")
+async def repo_history(repo_id: str, user: dict = Depends(get_current_user)):
+    docs = await db.ping_history.find(
+        {"repo_id": repo_id}, {"_id": 0}
+    ).sort("timestamp", -1).limit(48).to_list(48)
+    docs.reverse()
+    return {"history": docs}
+
+
+@api.get("/registry/fms-answers")
+async def get_fms_answers(user: dict = Depends(get_current_user)):
+    from registry_data import FMS_ANSWERS
+    return FMS_ANSWERS
+
+
+# --- internal ping helper (used by manual + cron) ------------------
+async def _ping_repo(repo_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
     import asyncio
     import time
+    import hashlib
     import requests as _rq
+
     repo = await db.repositories.find_one({"id": repo_id})
     if not repo:
-        raise HTTPException(404, "Repository not found")
+        return {"status": "ERROR", "error": "not_found", "repo_id": repo_id}
     url = repo.get("preview_url") or repo.get("github_url")
     headers = {}
     if repo.get("auth_type") == "api_key" and repo.get("api_key"):
@@ -313,8 +336,44 @@ async def ping_repository(repo_id: str, user: dict = Depends(get_current_user)):
     else:
         status = "ERROR"
 
+    ts = datetime.now(timezone.utc).isoformat()
+    ping_doc = {
+        "id": str(uuid.uuid4()),
+        "repo_id": repo_id,
+        "repo_key": repo.get("key"),
+        "timestamp": ts,
+        "status": status,
+        "http": http_code,
+        "ms": ms,
+        "error": err,
+        "url": url,
+    }
+
+    # Notarize (best-effort): if FREKCORE is CONNECTED, sign hash of the ping
+    frekcore = await db.repositories.find_one({"id": "repo-frekcore"})
+    if frekcore and frekcore.get("adapter_status") == "CONNECTED" and repo_id != "repo-frekcore":
+        payload = f"{repo_id}|{ts}|{status}|{http_code}|{ms}".encode()
+        digest = hashlib.sha256(payload).hexdigest()
+        ping_doc["notarization"] = {
+            "notary": "FREKCORE",
+            "sha256": digest,
+            "algorithm": "sha256+frek_pending_ed25519",
+            "notarized_at": ts,
+        }
+        await db.frek_notarizations.insert_one({
+            "id": str(uuid.uuid4()),
+            "trace_id": ping_doc["id"],
+            "target_type": "registry.ping",
+            "target_id": ping_doc["id"],
+            "target_repo_key": repo.get("key"),
+            "sha256": digest,
+            "created_at": ts,
+        })
+
+    await db.ping_history.insert_one(dict(ping_doc))
+
     upd = {
-        "last_ping": datetime.now(timezone.utc).isoformat(),
+        "last_ping": ts,
         "last_ping_status": status,
         "last_ping_http": http_code,
         "last_ping_ms": ms,
@@ -322,10 +381,39 @@ async def ping_repository(repo_id: str, user: dict = Depends(get_current_user)):
         "adapter_status": status if status == "CONNECTED" else repo.get("adapter_status", "NOT_CONNECTED"),
     }
     await db.repositories.update_one({"id": repo_id}, {"$set": upd})
-    await write_evidence(user, "registry.ping", "repository", repo_id,
-                          input_data={"url": url},
-                          output_data={"status": status, "http": http_code, "ms": ms})
-    return {"status": status, "http": http_code, "ms": ms, "url": url, "error": err}
+    if actor:
+        await write_evidence(actor, "registry.ping", "repository", repo_id,
+                              input_data={"url": url},
+                              output_data={"status": status, "http": http_code, "ms": ms,
+                                           "notarized": bool(ping_doc.get("notarization"))})
+    ping_doc.pop("_id", None)
+    return {"status": status, "http": http_code, "ms": ms, "url": url, "error": err,
+            "notarization": ping_doc.get("notarization")}
+
+
+# --- Cron endpoint (called hourly by .emergent/crons.yml) ---------
+@app.post("/api/cron/registry-ping-all")
+async def cron_ping_all(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    import asyncio
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    auth = request.headers.get("Authorization", "")
+    if not secret or not auth.startswith("Bearer ") or auth[7:] != secret:
+        raise HTTPException(status_code=401, detail="Invalid webhook auth")
+
+    repos = await db.repositories.find({}, {"id": 1, "_id": 0}).to_list(50)
+
+    system_actor = {"id": "cron", "email": "cron@meta-cvln", "role": "system"}
+
+    async def _bg():
+        for r in repos:
+            try:
+                await _ping_repo(r["id"], actor=system_actor)
+            except Exception as e:
+                log.exception(f"cron ping failed for {r['id']}: {e}")
+
+    asyncio.create_task(_bg())
+    return {"ok": True, "scheduled": len(repos)}
 
 
 # ------------------------------------------------------------------
@@ -638,12 +726,22 @@ async def _startup():
         log.info("Ecosystem seed loaded")
 
     # Idempotent registry seed for real CVLN source repos
+    valid_ids = set()
+    _refresh_keys = ("name", "github_url", "branch", "description",
+                     "tech_stack", "capabilities", "layer", "role",
+                     "adapters_declared", "entity_id", "resolved_questions",
+                     "notes", "is_trust_anchor")
     for repo in repositories_docs():
+        valid_ids.add(repo["id"])
+        insert_only = {k: v for k, v in repo.items() if k not in _refresh_keys}
+        set_now = {k: v for k, v in repo.items() if k in _refresh_keys}
         await db.repositories.update_one(
             {"id": repo["id"]},
-            {"$setOnInsert": repo},
+            {"$setOnInsert": insert_only, "$set": set_now},
             upsert=True,
         )
+    # Remove stale repos that are no longer in the registry list
+    await db.repositories.delete_many({"id": {"$nin": list(valid_ids)}})
 
 
 @app.on_event("shutdown")

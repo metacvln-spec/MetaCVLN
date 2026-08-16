@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { CardShell, Kpi, StatusDot } from "../components/Kpi";
+import { AreaChart, Area, ResponsiveContainer, Tooltip } from "recharts";
 
 const STATUS_COLORS = {
   CONNECTED: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10",
@@ -9,24 +10,66 @@ const STATUS_COLORS = {
   ERROR: "text-red-400 border-red-500/40 bg-red-500/10",
 };
 
+function Sparkline({ history }) {
+  if (!history || history.length === 0) {
+    return <div className="label-cap text-white/30">No history yet</div>;
+  }
+  const data = history.map((h, i) => ({
+    i,
+    up: h.status === "CONNECTED" ? 1 : 0,
+    ms: h.ms || 0,
+  }));
+  return (
+    <ResponsiveContainer width={140} height={36}>
+      <AreaChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+        <defs>
+          <linearGradient id="sparkGrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#22C55E" stopOpacity={0.6} />
+            <stop offset="100%" stopColor="#22C55E" stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
+        <Tooltip contentStyle={{ background: "#13141C", border: "1px solid #252633", fontSize: 10 }} labelFormatter={() => ""} formatter={(v, n) => n === "up" ? (v ? "UP" : "DOWN") : v + "ms"} />
+        <Area type="monotone" dataKey="up" stroke="#22C55E" strokeWidth={1.5} fill="url(#sparkGrad)" />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
 export default function Registry() {
   const [repos, setRepos] = useState([]);
+  const [histories, setHistories] = useState({});
   const [busy, setBusy] = useState(null);
   const [expanded, setExpanded] = useState(null);
   const [drafts, setDrafts] = useState({});
+  const [fmsAnswers, setFmsAnswers] = useState(null);
 
   async function load() {
     const { data } = await api.get("/registry/repositories");
     setRepos(data.repositories);
+    // fetch histories in parallel
+    const results = await Promise.all(
+      data.repositories.map((r) =>
+        api.get(`/registry/repositories/${r.id}/history`).then((x) => [r.id, x.data.history]).catch(() => [r.id, []])
+      )
+    );
+    setHistories(Object.fromEntries(results));
   }
-  useEffect(() => { load(); }, []);
+
+  async function loadFms() {
+    try {
+      const { data } = await api.get("/registry/fms-answers");
+      setFmsAnswers(data);
+    } catch (e) { /* ignore */ }
+  }
+
+  useEffect(() => { load(); loadFms(); }, []);
 
   async function ping(id) {
     setBusy(id);
     try {
       const { data } = await api.post(`/registry/repositories/${id}/ping`);
       toast[data.status === "CONNECTED" ? "success" : "error"](
-        `${data.status} · HTTP ${data.http ?? "—"} · ${data.ms}ms`
+        `${data.status} · HTTP ${data.http ?? "—"} · ${data.ms}ms${data.notarization ? " · notarized ⚡" : ""}`
       );
       await load();
     } catch (e) {
@@ -57,6 +100,7 @@ export default function Registry() {
 
   const connected = repos.filter((r) => r.adapter_status === "CONNECTED").length;
   const errored = repos.filter((r) => r.adapter_status === "ERROR").length;
+  const frekcoreConnected = repos.find((r) => r.key === "frekcore")?.adapter_status === "CONNECTED";
 
   return (
     <div data-testid="registry-page" className="space-y-6">
@@ -66,8 +110,8 @@ export default function Registry() {
           Écosystème CVLN · <span className="text-violet-400">Integrate. Do not rebuild.</span>
         </h1>
         <p className="text-sm text-white/50 mt-2 max-w-3xl">
-          6 dépôts existants recensés depuis GitHub. Meta CVLN OS ne réécrit rien — il
-          les découvre, les ping en temps réel et propage le contexte via adapters + 5 contrats.
+          {repos.length} dépôts GitHub recensés · ping automatique horaire (cron) ·
+          notarisation FREKCORE {frekcoreConnected ? "ACTIVE ⚡" : "en attente (FREKCORE non connecté)"}
         </p>
       </div>
 
@@ -78,10 +122,29 @@ export default function Registry() {
         <Kpi label="Errors" value={errored} tone="red" testId="reg-err" />
       </div>
 
+      {fmsAnswers && (
+        <CardShell title="FMS OS · Questions bloquantes · Réponses officielles" testId="fms-answers">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {Object.entries(fmsAnswers).map(([k, v]) => (
+              <div key={k} className="border border-[#252633] rounded-sm p-3">
+                <div className="label-cap text-amber-400 mb-1">{k.replace(/_/g, " ")}</div>
+                <div className="text-sm text-white font-semibold mb-2">{v.answer}</div>
+                <div className="text-xs text-white/60 mb-2">{v.rationale}</div>
+                <div className="text-xs text-white/50 border-t border-[#252633] pt-2 mt-2">
+                  <span className="label-cap">Conséquence · </span>
+                  {v.consequence}
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardShell>
+      )}
+
       <div className="space-y-3">
         {repos.map((r) => {
           const isOpen = expanded === r.id;
           const draft = drafts[r.id] || {};
+          const hist = histories[r.id] || [];
           return (
             <div key={r.id} data-testid={`repo-${r.key}`} className="surface-card">
               <button
@@ -90,14 +153,28 @@ export default function Registry() {
               >
                 <StatusDot health={r.health} />
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     <div className="text-white font-semibold">{r.name}</div>
                     <span className={`px-2 py-0.5 rounded-sm border text-[10px] font-mono uppercase tracking-widest ${STATUS_COLORS[r.adapter_status] || STATUS_COLORS.NOT_CONNECTED}`}>
                       {r.adapter_status}
                     </span>
+                    {r.is_trust_anchor && (
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-amber-400 border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 rounded-sm">
+                        Trust anchor
+                      </span>
+                    )}
+                    {r.entity_id && (
+                      <span className="text-[10px] font-mono text-violet-300">entity_id={r.entity_id}</span>
+                    )}
                   </div>
                   <div className="label-cap mt-1">
                     {r.org}/{r.github_url.split("/").pop()} · {r.layer} · {r.role}
+                  </div>
+                </div>
+                <div className="w-[150px]">
+                  <Sparkline history={hist} />
+                  <div className="label-cap mt-1 text-right">
+                    {hist.length ? `${hist.filter(h=>h.status==='CONNECTED').length}/${hist.length} up` : "—"}
                   </div>
                 </div>
                 <div className="text-right">
@@ -107,7 +184,7 @@ export default function Registry() {
                         {r.last_ping_http ?? "—"} · {r.last_ping_ms ?? "—"}ms
                       </div>
                       <div className="label-cap">
-                        {new Date(r.last_ping).toLocaleString("fr-FR")}
+                        {new Date(r.last_ping).toLocaleTimeString("fr-FR")}
                       </div>
                     </>
                   ) : (
@@ -180,17 +257,9 @@ export default function Registry() {
                     </div>
                   )}
 
-                  {r.open_questions && (
-                    <div>
-                      <div className="label-cap mb-2 text-amber-400">Questions ouvertes</div>
-                      <ul className="text-sm text-white/80 space-y-1">
-                        {r.open_questions.map((q, i) => (
-                          <li key={i} className="flex gap-2">
-                            <span className="text-amber-400">?</span>
-                            <span>{q}</span>
-                          </li>
-                        ))}
-                      </ul>
+                  {r.notes && (
+                    <div className="text-xs text-white/60 border-l-2 border-amber-500/40 pl-3">
+                      {r.notes}
                     </div>
                   )}
 

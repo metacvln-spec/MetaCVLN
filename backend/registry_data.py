@@ -1,7 +1,6 @@
 """Real registry of CVLN ecosystem source repositories.
 
 Doctrine: Meta CVLN OS DOES NOT rebuild these — it connects them.
-Each entry is a source system with real metadata from the actual GitHub repo.
 """
 import uuid
 from datetime import datetime, timezone
@@ -9,6 +8,53 @@ from datetime import datetime, timezone
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+# Answers to FMS OS' three blocking questions — captured here so the whole
+# ecosystem can read them from a single source.
+FMS_ANSWERS = {
+    "gateway_url": {
+        "answer": "B — no central gateway in preview. Each entity keeps its own preview URL and exposes /api/entities/{key}/... on itself.",
+        "rationale": (
+            "Preview URLs are per-app on Emergent ingress. A central gateway would "
+            "add a hop and a single point of failure. Meta CVLN OS is the coherence "
+            "layer, not a proxy: it discovers, routes, observes and notarizes."
+        ),
+        "consequence": (
+            "FMS OS resolves each capability by looking up the preview_url of the "
+            "target entity in Meta CVLN Registry, then calls it directly with the "
+            "auth headers Meta CVLN publishes for that entity."
+        ),
+    },
+    "auth_preview": {
+        "answer": "B — Bearer token issued by FREKCORE (Frek-ID SSO). API Key only as a temporary shim for preview environments that cannot verify signed tokens yet.",
+        "rationale": (
+            "mTLS is not playable on Emergent preview ingress. FREKCORE already "
+            "issues did:frek + Ed25519 identities, so Bearer JWT signed by "
+            "FREKCORE is the shortest path to real cross-entity auth."
+        ),
+        "consequence": (
+            "Meta CVLN Registry stores per-entity Authorization headers. FMS OS "
+            "reads them once at login and reuses the same Bearer for every "
+            "cross-entity call. Every call is journalled in Evidence & Audit."
+        ),
+    },
+    "fms_identity": {
+        "answer": "C — FMS = `labelos:fms`. FMS is a deployment of the LabelOS domain, not a new sibling entity.",
+        "rationale": (
+            "LabelOS is the domain (catalogue, contracts, royalties, agents "
+            "production musicale). FMS is one label instance running that domain. "
+            "Same contracts, same capabilities, distinguished only by the "
+            "deployment prefix so cross-entity calls stay unambiguous."
+        ),
+        "consequence": (
+            "In Registry, FMS OS keeps its own repo entry but its entity_id is "
+            "`labelos:fms`. All LabelOS capabilities are available. New labels "
+            "later reuse the same domain contract — `labelos:<slug>` — without "
+            "creating a parallel architecture."
+        ),
+    },
+}
 
 
 REPOSITORIES = [
@@ -22,9 +68,9 @@ REPOSITORIES = [
         "role": "Identity, provenance & cultural notarization",
         "description": (
             "Open protocol for verifying DJ mixes and musical performances. "
-            "Cryptographic proof (Ed25519) without surveillance. Offline-first — all "
-            "verification happens in browser. .frek.json format with fingerprint, "
-            "segments, signature."
+            "Cryptographic proof (Ed25519) without surveillance. Offline-first — "
+            "verification runs in browser. .frek.json format with fingerprint, "
+            "segments, signature, public_key."
         ),
         "tech_stack": ["React", "Ed25519", "Zod", "SHA-256"],
         "capabilities": ["notarize_action", "verify_signature", "issue_frek_json"],
@@ -40,6 +86,44 @@ REPOSITORIES = [
         ],
         "adapter_status": "NOT_CONNECTED",
         "health": "amber",
+        "is_trust_anchor": True,
+    },
+    {
+        "key": "frekansla",
+        "name": "FREKANSLA v0.1 — Master Certifier & Creative Engine",
+        "org": "frekcore",
+        "github_url": "https://github.com/frekcore/FREKANSLA",
+        "branch": "main",
+        "layer": "Trust Layer",
+        "role": "Master certification, signed .FK containers, provenance",
+        "description": (
+            "Plugin visuel (V026 Creative Engine, décor Logic Pro X simulé, macros "
+            "INTENTION MORPH, DSP Web Audio réel) + Master Certifier (pipeline 4 "
+            "étapes → Session Analyzer → Asset Compiler → FK Object Creator V3 → "
+            "Secure Signature). FREK-ID did:frek + Ed25519 avec clés privées "
+            "chiffrées Fernet. Conteneur .FK signé, journal de provenance "
+            "append-only, moteur de vérification Authentique/Valide/Invalide + "
+            "détection d'altération."
+        ),
+        "tech_stack": [
+            "React", "Web Audio API", "FastAPI",
+            "Ed25519", "Fernet", "Motor"
+        ],
+        "capabilities": [
+            "creative_engine_dsp",
+            "session_analyze",
+            "asset_compile",
+            "create_fk_object_v3",
+            "sign_ed25519",
+            "verify_fk",
+            "detect_tampering",
+        ],
+        "routes": ["/", "/creative-engine", "/master-certifier"],
+        "preview_url": None,
+        "auth_type": "bearer",
+        "adapter_status": "NOT_CONNECTED",
+        "health": "green",
+        "notes": "Signatures Ed25519 réelles. Ancrage FREK-Chain et publication KORA restent mockés en v0.1.",
     },
     {
         "key": "cvln_agent_factory",
@@ -50,9 +134,9 @@ REPOSITORIES = [
         "layer": "Control Plane",
         "role": "Agent creation, composition, reuse and lifecycle",
         "description": (
-            "Fabrique d'agents spécialisés. Discovery, versioning, "
-            "capability registry, health & latency exposure. Reuse → compose → "
-            "parallelize → create."
+            "Fabrique d'agents spécialisés. Discovery, versioning, capability "
+            "registry, health & latency exposure. Reuse → compose → parallelize → "
+            "create."
         ),
         "tech_stack": ["FastAPI", "React", "MongoDB"],
         "capabilities": ["create_agent", "compose_agents", "expose_capability", "heartbeat"],
@@ -71,11 +155,11 @@ REPOSITORIES = [
         "layer": "Learning Plane",
         "role": "Cognition, memory, evaluation, confidence",
         "description": (
-            "Matrice d'intelligence ancrée dans la culture, la stratégie économique "
-            "et les flux financiers de la Diaspora. Semi-Open Source (BSL 1.1 → "
-            "Apache 2.0 en 2029). Chat streaming SSE, AES-256-GCM at rest, "
-            "HMAC-SHA256 fingerprint sans cookies, Persona anti-jailbreak v1.2. "
-            "SDK Python (pip install laurentia-sdk) + widget web."
+            "Matrice d'intelligence ancrée dans la culture et la stratégie "
+            "économique de la Diaspora. Semi-Open Source (BSL 1.1 → Apache 2.0 en "
+            "2029). Chat streaming SSE, AES-256-GCM at rest, HMAC-SHA256 "
+            "fingerprint sans cookies, Persona anti-jailbreak v1.2. SDK Python "
+            "(pip install laurentia-sdk) + widget web."
         ),
         "tech_stack": [
             "FastAPI", "React", "Tailwind", "MongoDB",
@@ -104,35 +188,74 @@ REPOSITORIES = [
         "health": "green",
     },
     {
-        "key": "kiltikonet",
-        "name": "Kiltikonet — Culture Connect 2026",
+        "key": "cvl_academy",
+        "name": "CVL Academy",
         "org": "cultureconnectorg",
-        "github_url": "https://github.com/cultureconnectorg/Kiltikonet",
+        "github_url": "https://github.com/cultureconnectorg/CVL-ACADEMY",
         "branch": "main",
         "layer": "Product",
-        "role": "Plateforme culturelle souveraine — Martinique",
+        "role": "Formation, montée en compétences, certification, recherche",
         "description": (
-            "PWA full-stack pour Culture Connect 2026 (Martinique) : accréditations, "
-            "paiements Stripe live, badges NFC (Baserow sync), IA culturelle (Claude "
-            "Sonnet via Emergent), gouvernance communautaire. WebAuthn Face ID/Touch "
-            "ID, Google OAuth, Magic Link. Web Push VAPID. Offline-first."
+            "Plateforme d'apprentissage & recherche de l'écosystème CVLN. "
+            "Contrat d'intégration défini (INTEGRATION_CONTRACT.md). Émet des "
+            "événements de certification et de parcours, à connecter à FREKCORE "
+            "pour notarisation cross-entités."
+        ),
+        "tech_stack": ["FastAPI", "React", "MongoDB"],
+        "capabilities": [
+            "issue_certification",
+            "track_learning_path",
+            "publish_research",
+            "connect_frekcore",
+        ],
+        "routes": ["/", "/os"],
+        "preview_url": None,
+        "auth_type": "bearer",
+        "adapter_status": "NOT_CONNECTED",
+        "health": "amber",
+    },
+    {
+        "key": "kiltikonet",
+        "name": "Kiltikonet — Culture Connect 2026 · Aout",
+        "org": "cultureconnectorg",
+        "github_url": "https://github.com/cultureconnectorg/Kiltikonet-Aout2026",
+        "branch": "main",
+        "layer": "Product",
+        "role": "Plateforme culturelle souveraine — Martinique · Network",
+        "description": (
+            "PWA full-stack pour Culture Connect 2026 (Martinique) + Kiltikonet "
+            "Network Phase 0 (Discovery) + Phase 1 (14 endpoints /overview /access "
+            "/programmes publics, territories/operators/licenses/compliance "
+            "protégés, data lineage obligatoire, RBAC 18 rôles, règle FREK-ID = "
+            "retrait). Homepage refondue au mockup PNG monumental (Newsreader, "
+            "carte du monde SVG 5 continents, sections 02→08 numérotées or, "
+            "Observatory temps réel avec traces vérifiées)."
         ),
         "tech_stack": [
-            "React 19", "Tailwind 4", "Framer Motion", "FastAPI",
-            "MongoDB Atlas", "Stripe live", "Brevo", "WebAuthn",
-            "Baserow NFC", "pywebpush", "Emergent Object Storage"
+            "React 19", "Tailwind 4", "Newsreader", "Framer Motion",
+            "FastAPI", "MongoDB Atlas", "Stripe live", "Brevo",
+            "WebAuthn", "Baserow NFC", "pywebpush", "Emergent Object Storage"
         ],
         "capabilities": [
+            "network_overview",
+            "network_territories",
+            "network_operators",
+            "network_licenses",
+            "network_compliance",
+            "network_audits",
+            "network_training",
+            "network_signals",
+            "network_governance",
             "accreditation",
             "payment_stripe",
             "nfc_badge",
             "webauthn_auth",
             "web_push",
-            "cultural_ai_query",
+            "observatory_public_now",
         ],
-        "routes": ["/", "/pro", "/admin/core", "/espace-pro/connexion", "/scan"],
-        "iteration": "86",
-        "test_status": "backend 11/11 · frontend 100%",
+        "routes": ["/", "/pro", "/network", "/admin/core", "/espace-pro/connexion", "/scan"],
+        "iteration": "97",
+        "test_status": "backend + frontend 100%",
         "preview_url": None,
         "auth_type": "bearer",
         "adapter_status": "NOT_CONNECTED",
@@ -147,10 +270,10 @@ REPOSITORIES = [
         "layer": "Product",
         "role": "Portail gala culinaire — Paris 12.12.2026",
         "description": (
-            "Site public éditorial premium + back-office privé sécurisé pour le Cook "
-            "& Food Gala 2026 (Paris, 12.12.2026). 45+ endpoints, 20 collections "
-            "MongoDB, seeds automatiques (25 postes, 7 pôles, 7 entités écosystème), "
-            "invitations VIP, contrats & NDA, cercle & mécénat."
+            "Site public éditorial premium + back-office privé sécurisé. 45+ "
+            "endpoints, 20 collections MongoDB, seeds automatiques (25 postes, 7 "
+            "pôles, 7 entités écosystème), invitations VIP, contrats & NDA, "
+            "cercle & mécénat."
         ),
         "tech_stack": [
             "React 19", "Tailwind", "shadcn/ui", "Framer Motion", "GSAP",
@@ -158,14 +281,8 @@ REPOSITORIES = [
             "Stripe test", "ReportLab", "Resend (mocked)", "Yousign (mocked)"
         ],
         "capabilities": [
-            "billetterie",
-            "rsvp",
-            "candidatures",
-            "casting",
-            "sponsoring",
-            "mecenat",
-            "invitations_vip",
-            "signature_electronique",
+            "billetterie", "rsvp", "candidatures", "casting",
+            "sponsoring", "mecenat", "invitations_vip", "signature_electronique",
         ],
         "routes": [
             "/", "/concept", "/prix", "/billetterie", "/rsvp",
@@ -180,19 +297,20 @@ REPOSITORIES = [
     },
     {
         "key": "fms_os",
-        "name": "Factory Maker Studio OS",
+        "name": "Factory Maker Studio OS (labelos:fms)",
         "org": "fms-os",
         "github_url": "https://github.com/fms-os/fms",
         "branch": "main",
         "layer": "Product",
-        "role": "Label · production · édition & distribution",
+        "role": "LabelOS deployment · production musicale, catalogue, artistes",
+        "entity_id": "labelos:fms",
         "description": (
             "Site vitrine public + FMS OS interne (Command Center, CRUD Projets/"
             "Artistes/Clients/Bookings, A&R Kanban, Leads, Intégrations). "
-            "Infrastructure client CVLN livrée : GET /api/os/integrations, "
-            "PATCH config (base_url/api_key/entity_id/auth_type), POST test "
-            "(ping HTTP réel), GET audit-log. Statut CONNECTED uniquement après "
-            "test réussi. 7 adapters exposés en NOT_CONNECTED par défaut."
+            "Infrastructure client CVLN livrée : GET /api/os/integrations, PATCH "
+            "config (base_url/api_key/entity_id/auth_type), POST test (ping HTTP "
+            "réel), GET audit-log. Statut CONNECTED uniquement après test réussi. "
+            "7 adapters exposés en NOT_CONNECTED par défaut."
         ),
         "tech_stack": [
             "React 19", "Cormorant Garamond", "Outfit", "IBM Plex",
@@ -216,11 +334,7 @@ REPOSITORIES = [
         "founder_email": "anbatolmq@gmail.com",
         "preview_url": None,
         "auth_type": "bearer",
-        "open_questions": [
-            "Gateway central URL vs par-entité preview ?",
-            "Auth réelle preview : X-API-Key vs Bearer FREKCORE vs open ?",
-            "FMS = labelos ou nouvelle entité factory_maker_studio ?",
-        ],
+        "resolved_questions": True,
         "adapter_status": "NOT_CONNECTED",
         "health": "green",
     },
@@ -228,7 +342,6 @@ REPOSITORIES = [
 
 
 def repositories_docs():
-    """Return the repositories with stable IDs (idempotent seed)."""
     out = []
     for r in REPOSITORIES:
         out.append({
