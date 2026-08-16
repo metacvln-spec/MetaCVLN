@@ -330,6 +330,55 @@ async def list_notarizations(user: dict = Depends(get_current_user)):
     return {"notarizations": docs, "notary": key or {}, "count": len(docs)}
 
 
+@api.get("/notarizations/{notarization_id}/export")
+async def export_notarization(notarization_id: str, user: dict = Depends(get_current_user)):
+    n = await db.frek_notarizations.find_one({"id": notarization_id}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Notarization not found")
+    key = await db.system_keys.find_one({"name": "meta-cvln-notary"}, {"_id": 0}) or {}
+    artifact = {
+        "frek_version": "0.4",
+        "event": {
+            "id": n["id"],
+            "trace_id": n.get("trace_id"),
+            "type": n.get("target_type"),
+            "target_id": n.get("target_id"),
+            "target_repo_key": n.get("target_repo_key"),
+            "target_repo_name": n.get("target_repo_name"),
+            "status": n.get("status"),
+            "http": n.get("http"),
+            "ms": n.get("ms"),
+            "created_at": n.get("created_at"),
+        },
+        "fingerprint": f"sha256:{n['sha256']}",
+        "signature": f"ed25519:{n['signature_b64']}",
+        "public_key": n["public_key_b64"],
+        "notary": {
+            "did": n.get("notary_did") or key.get("did"),
+            "algorithm": n.get("algorithm", "ed25519"),
+            "issued_by": "meta-cvln-os",
+        },
+        "verification": {
+            "method": "ed25519.verify(public_key, signature, sha256_hex.encode())",
+            "external_verify_url": None,
+        },
+        "metadata": {
+            "timestamp": n.get("created_at"),
+            "source_type": "registry.ping",
+            "schema": "frek.notarization.v1",
+        },
+    }
+    return artifact
+
+
+# --- Public read-only ledger (no auth) - external auditors -------
+@api.get("/public/notarizations")
+async def public_ledger():
+    docs = await db.frek_notarizations.find({}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+    key = await db.system_keys.find_one({"name": "meta-cvln-notary"}, {"_id": 0, "private_b64": 0}) or {}
+    return {"notary": key, "notarizations": docs}
+
+
 @api.post("/notarizations/{notarization_id}/verify")
 async def verify_notarization(notarization_id: str, user: dict = Depends(get_current_user)):
     n = await db.frek_notarizations.find_one({"id": notarization_id}, {"_id": 0})

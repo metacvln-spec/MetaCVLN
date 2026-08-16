@@ -15,6 +15,9 @@ import AgentFactory from "./pages/AgentFactory";
 import DecisionSystem from "./pages/DecisionSystem";
 import EvidenceAudit from "./pages/EvidenceAudit";
 import Notarizations from "./pages/Notarizations";
+import MetaPublic from "./pages/MetaPublic";
+import MetaCommercial from "./pages/MetaCommercial";
+import AuditPublic from "./pages/AuditPublic";
 import CVLBrain from "./pages/CVLBrain";
 import "./App.css";
 
@@ -37,6 +40,9 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/public" element={<MetaPublic />} />
+          <Route path="/commercial" element={<MetaCommercial />} />
+          <Route path="/audit" element={<AuditPublic />} />
           <Route
             element={
               <Gate>

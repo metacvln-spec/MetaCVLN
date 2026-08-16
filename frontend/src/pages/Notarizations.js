@@ -120,14 +120,26 @@ export default function Notarizations() {
                             : "text-red-400 border-red-500/40 bg-red-500/10"
                         }`}>{v.valid ? "VALID ✓" : "INVALID"}</span>
                       ) : (
-                        <button
-                          data-testid={`verify-${n.id}`}
-                          onClick={() => verify(n.id)}
-                          disabled={verifying === n.id}
-                          className="btn-ghost text-[10px] disabled:opacity-50"
-                        >
-                          {verifying === n.id ? "…" : "Verify"}
-                        </button>
+                        <div className="flex justify-end gap-1">
+                          <button
+                            data-testid={`verify-${n.id}`}
+                            onClick={() => verify(n.id)}
+                            disabled={verifying === n.id}
+                            className="btn-ghost text-[10px] disabled:opacity-50"
+                          >
+                            {verifying === n.id ? "…" : "Verify"}
+                          </button>
+                          <a
+                            data-testid={`export-${n.id}`}
+                            href={`${process.env.REACT_APP_BACKEND_URL}/api/notarizations/${n.id}/export`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn-gold text-[10px]"
+                            download={`notarization-${n.id.slice(0,8)}.frek.json`}
+                          >
+                            .frek.json
+                          </a>
+                        </div>
                       )}
                     </td>
                   </tr>
