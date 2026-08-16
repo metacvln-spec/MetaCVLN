@@ -4,5 +4,11 @@ crons:
     cron: "15 * * * *"
     endpoint: "{{BASE_URL}}/api/cron/registry-ping-all"
     method: POST
-    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
+
+  - name: weekly-drop-report
+    description: "Monday 09:00 CET — availability digest per repo, flags any repo below 95%"
+    cron: "0 8 * * 1"
+    endpoint: "{{BASE_URL}}/api/cron/weekly-drop-report"
+    method: POST
     enabled: true

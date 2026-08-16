@@ -15,6 +15,7 @@ import AgentFactory from "./pages/AgentFactory";
 import DecisionSystem from "./pages/DecisionSystem";
 import EvidenceAudit from "./pages/EvidenceAudit";
 import Notarizations from "./pages/Notarizations";
+import WeeklyReport from "./pages/WeeklyReport";
 import MetaPublic from "./pages/MetaPublic";
 import MetaCommercial from "./pages/MetaCommercial";
 import AuditPublic from "./pages/AuditPublic";
@@ -63,6 +64,7 @@ export default function App() {
             <Route path="/decisions" element={<DecisionSystem />} />
             <Route path="/evidence" element={<EvidenceAudit />} />
             <Route path="/notarizations" element={<Notarizations />} />
+            <Route path="/weekly-report" element={<WeeklyReport />} />
             <Route path="/brain" element={<CVLBrain />} />
           </Route>
         </Routes>

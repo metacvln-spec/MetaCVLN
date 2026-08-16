@@ -323,11 +323,68 @@ async def _get_or_create_notary_key():
     return priv, pub_b64, did
 
 
+async def _notarize_via_frekcore(digest: str) -> Optional[Dict[str, Any]]:
+    """Attempt to notarize via the real FREKCORE endpoint (POST /api/notarize).
+
+    Expected contract (FREKCORE side):
+        POST {FREKCORE_NOTARIZE_URL}
+        Authorization: Bearer {FREKCORE_API_KEY}
+        Body: {"sha256": "<hex>", "issuer": "meta-cvln-os"}
+        Response: {"signature_b64": "...", "public_key_b64": "...",
+                   "did": "did:frek:...", "algorithm": "ed25519",
+                   "anchored_at": "iso", "chain_ref": "frek-chain://..."}
+
+    Returns None if not configured or on any error, in which case caller
+    falls back to the local Meta CVLN key.
+    """
+    import asyncio
+    import requests as _rq
+    url = os.environ.get("FREKCORE_NOTARIZE_URL", "").strip()
+    if not url or os.environ.get("NOTARY_MODE", "local").lower() != "frekcore":
+        return None
+    headers = {"Content-Type": "application/json"}
+    key = os.environ.get("FREKCORE_API_KEY", "")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    def _do():
+        try:
+            r = _rq.post(url, headers=headers, json={
+                "sha256": digest, "issuer": "meta-cvln-os"
+            }, timeout=8)
+            if r.status_code < 300:
+                return r.json()
+        except Exception as e:
+            log.warning(f"FREKCORE notarize failed, falling back to local: {e}")
+        return None
+
+    return await asyncio.to_thread(_do)
+
+
 @api.get("/notarizations")
-async def list_notarizations(user: dict = Depends(get_current_user)):
-    docs = await db.frek_notarizations.find({}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+async def list_notarizations(
+    user: dict = Depends(get_current_user),
+    repo_key: Optional[str] = None,
+    status: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    limit: int = 200,
+):
+    q: Dict[str, Any] = {}
+    if repo_key:
+        q["target_repo_key"] = repo_key
+    if status:
+        q["status"] = status
+    if since or until:
+        rng: Dict[str, Any] = {}
+        if since:
+            rng["$gte"] = since
+        if until:
+            rng["$lte"] = until
+        q["created_at"] = rng
+    docs = await db.frek_notarizations.find(q, {"_id": 0}).sort("created_at", -1).limit(min(limit, 500)).to_list(500)
     key = await db.system_keys.find_one({"name": "meta-cvln-notary"}, {"_id": 0, "private_b64": 0})
-    return {"notarizations": docs, "notary": key or {}, "count": len(docs)}
+    return {"notarizations": docs, "notary": key or {}, "count": len(docs), "filters": q}
 
 
 @api.get("/notarizations/{notarization_id}/export")
@@ -335,9 +392,17 @@ async def export_notarization(notarization_id: str, user: dict = Depends(get_cur
     n = await db.frek_notarizations.find_one({"id": notarization_id}, {"_id": 0})
     if not n:
         raise HTTPException(404, "Notarization not found")
-    key = await db.system_keys.find_one({"name": "meta-cvln-notary"}, {"_id": 0}) or {}
-    artifact = {
-        "frek_version": "0.4",
+    return _build_fk_container(n)
+
+
+# --- FK container (FREKANSLA FK Object v3 format) --------------------
+def _build_fk_container(n: dict) -> dict:
+    """Return a signed FK container (FREKANSLA FK Object v3 compatible)."""
+    return {
+        "fk_version": "3.0",
+        "schema": "fk.object.v3",
+        "issuer": "meta-cvln-os",
+        "issued_at": n.get("created_at"),
         "event": {
             "id": n["id"],
             "trace_id": n.get("trace_id"),
@@ -350,33 +415,122 @@ async def export_notarization(notarization_id: str, user: dict = Depends(get_cur
             "ms": n.get("ms"),
             "created_at": n.get("created_at"),
         },
-        "fingerprint": f"sha256:{n['sha256']}",
-        "signature": f"ed25519:{n['signature_b64']}",
-        "public_key": n["public_key_b64"],
+        "provenance": [
+            {"stage": "observation", "actor": "meta-cvln-os.registry", "at": n.get("created_at")},
+            {"stage": "hash", "actor": "meta-cvln-os.notary", "algorithm": "sha256"},
+            {"stage": "signature", "actor": n.get("notary_source", "local"),
+             "algorithm": "ed25519", "did": n.get("notary_did")},
+        ],
+        "fingerprint": {"algorithm": "sha256", "value": n["sha256"]},
+        "signature": {"algorithm": "ed25519", "value": n["signature_b64"]},
+        "public_key": {"algorithm": "ed25519", "value": n["public_key_b64"]},
         "notary": {
-            "did": n.get("notary_did") or key.get("did"),
+            "did": n.get("notary_did"),
+            "source": n.get("notary_source", "local"),
             "algorithm": n.get("algorithm", "ed25519"),
-            "issued_by": "meta-cvln-os",
+            "chain_ref": n.get("chain_ref"),
+            "anchored_at": n.get("anchored_at"),
         },
         "verification": {
             "method": "ed25519.verify(public_key, signature, sha256_hex.encode())",
-            "external_verify_url": None,
-        },
-        "metadata": {
-            "timestamp": n.get("created_at"),
-            "source_type": "registry.ping",
-            "schema": "frek.notarization.v1",
+            "off_platform": True,
         },
     }
-    return artifact
 
 
 # --- Public read-only ledger (no auth) - external auditors -------
 @api.get("/public/notarizations")
-async def public_ledger():
-    docs = await db.frek_notarizations.find({}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
+async def public_ledger(repo_key: Optional[str] = None, status: Optional[str] = None,
+                        since: Optional[str] = None, limit: int = 50):
+    q: Dict[str, Any] = {}
+    if repo_key: q["target_repo_key"] = repo_key
+    if status: q["status"] = status
+    if since: q["created_at"] = {"$gte": since}
+    docs = await db.frek_notarizations.find(q, {"_id": 0}).sort("created_at", -1).limit(min(limit, 200)).to_list(200)
     key = await db.system_keys.find_one({"name": "meta-cvln-notary"}, {"_id": 0, "private_b64": 0}) or {}
-    return {"notary": key, "notarizations": docs}
+    return {"notary": key, "notarizations": docs, "count": len(docs)}
+
+
+@api.get("/public/notarizations/{notarization_id}/fk")
+async def public_fk(notarization_id: str):
+    n = await db.frek_notarizations.find_one({"id": notarization_id}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Notarization not found")
+    return _build_fk_container(n)
+
+
+# --- Weekly Drop Report ------------------------------------------
+@api.get("/reports/weekly-drop/latest")
+async def latest_weekly_report(user: dict = Depends(get_current_user)):
+    doc = await db.reports.find_one({"kind": "weekly-drop"}, {"_id": 0}, sort=[("created_at", -1)])
+    return doc or {}
+
+
+@api.get("/reports/weekly-drop")
+async def list_weekly_reports(user: dict = Depends(get_current_user)):
+    return await db.reports.find({"kind": "weekly-drop"}, {"_id": 0}).sort("created_at", -1).limit(20).to_list(20)
+
+
+async def _compute_weekly_drop_report() -> dict:
+    """Aggregate ping_history for last 7 days per repo, flag < 95%."""
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    pipeline = [
+        {"$match": {"timestamp": {"$gte": since}}},
+        {"$group": {
+            "_id": "$repo_key",
+            "total": {"$sum": 1},
+            "up": {"$sum": {"$cond": [{"$eq": ["$status", "CONNECTED"]}, 1, 0]}},
+            "avg_ms": {"$avg": "$ms"},
+        }},
+    ]
+    rows = []
+    async for r in db.ping_history.aggregate(pipeline):
+        total = r["total"] or 1
+        uptime = round(100.0 * r["up"] / total, 2)
+        rows.append({
+            "repo_key": r["_id"],
+            "total_pings": total,
+            "up": r["up"],
+            "uptime_pct": uptime,
+            "avg_ms": int(r["avg_ms"] or 0),
+            "flag": uptime < 95.0,
+        })
+    rows.sort(key=lambda x: x["uptime_pct"])
+    flagged = [r for r in rows if r["flag"]]
+    return {
+        "id": str(uuid.uuid4()),
+        "kind": "weekly-drop",
+        "period_days": 7,
+        "since": since,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "threshold_pct": 95.0,
+        "rows": rows,
+        "flagged": flagged,
+        "flagged_count": len(flagged),
+        "total_repos": len(rows),
+    }
+
+
+@app.post("/api/cron/weekly-drop-report")
+async def cron_weekly_report(request: Request):
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    auth = request.headers.get("Authorization", "")
+    if not secret or not auth.startswith("Bearer ") or auth[7:] != secret:
+        raise HTTPException(status_code=401, detail="Invalid webhook auth")
+    report = await _compute_weekly_drop_report()
+    await db.reports.insert_one(dict(report))
+    # Also raise an alert per flagged repo
+    for f in report["flagged"]:
+        await db.alerts.insert_one({
+            "id": str(uuid.uuid4()),
+            "severity": "warning",
+            "message": f"Uptime {f['uptime_pct']}% < 95% pour {f['repo_key']} (7j)",
+            "module": "reports",
+            "source": "Weekly Drop Report",
+            "status": "open",
+            "timestamp": report["created_at"],
+        })
+    return {"ok": True, "flagged_count": report["flagged_count"], "report_id": report["id"]}
 
 
 @api.post("/notarizations/{notarization_id}/verify")
@@ -462,22 +616,41 @@ async def _ping_repo(repo_id: str, actor: Optional[dict] = None) -> Dict[str, An
         "url": url,
     }
 
-    # Notarize (best-effort): if FREKCORE is CONNECTED, real Ed25519 signature
+    # Notarize (best-effort): FREKCORE remote if configured, else local Ed25519
     frekcore = await db.repositories.find_one({"id": "repo-frekcore"})
     if frekcore and frekcore.get("adapter_status") == "CONNECTED" and repo_id != "repo-frekcore":
         payload = f"{repo_id}|{ts}|{status}|{http_code}|{ms}".encode()
         digest = hashlib.sha256(payload).hexdigest()
-        priv, pub_b64, did = await _get_or_create_notary_key()
-        signature = priv.sign(digest.encode())
-        sig_b64 = _b64.b64encode(signature).decode()
+
+        remote = await _notarize_via_frekcore(digest)
+        if remote and remote.get("signature_b64") and remote.get("public_key_b64"):
+            sig_b64 = remote["signature_b64"]
+            pub_b64 = remote["public_key_b64"]
+            did = remote.get("did", "did:frek:unknown")
+            notary_name = "FREKCORE (remote)"
+            notary_source = "frekcore"
+            chain_ref = remote.get("chain_ref")
+            anchored_at = remote.get("anchored_at")
+        else:
+            priv, pub_b64, did = await _get_or_create_notary_key()
+            signature = priv.sign(digest.encode())
+            sig_b64 = _b64.b64encode(signature).decode()
+            notary_name = "FREKCORE-compatible (meta-cvln-local)"
+            notary_source = "local"
+            chain_ref = None
+            anchored_at = None
+
         ping_doc["notarization"] = {
-            "notary": "FREKCORE-compatible (meta-cvln-local)",
+            "notary": notary_name,
+            "notary_source": notary_source,
             "notary_did": did,
             "sha256": digest,
             "algorithm": "ed25519",
             "signature_b64": sig_b64,
             "public_key_b64": pub_b64,
             "notarized_at": ts,
+            "chain_ref": chain_ref,
+            "anchored_at": anchored_at,
         }
         await db.frek_notarizations.insert_one({
             "id": str(uuid.uuid4()),
@@ -490,7 +663,10 @@ async def _ping_repo(repo_id: str, actor: Optional[dict] = None) -> Dict[str, An
             "signature_b64": sig_b64,
             "public_key_b64": pub_b64,
             "notary_did": did,
+            "notary_source": notary_source,
             "algorithm": "ed25519",
+            "chain_ref": chain_ref,
+            "anchored_at": anchored_at,
             "status": status,
             "http": http_code,
             "ms": ms,

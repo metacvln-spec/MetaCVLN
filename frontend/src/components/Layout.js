@@ -16,6 +16,7 @@ const NAV = [
   { to: "/decisions", label: "Decision System", scope: "decisions" },
   { to: "/evidence", label: "Evidence & Audit", scope: "evidence" },
   { to: "/notarizations", label: "Notary Ledger", scope: "notarizations" },
+  { to: "/weekly-report", label: "Weekly Report", scope: "weekly_report" },
   { to: "/brain", label: "CVL Brain", scope: "brain" },
 ];
 

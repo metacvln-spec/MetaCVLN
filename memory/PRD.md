@@ -1,32 +1,48 @@
 # META CVLN OS — PRD
 
 ## Doctrine
-DATA → CONTEXT → PREPARATION → HUMAN DECISION → EXECUTION → VERIFICATION → FEEDBACK
-**Integrate before rebuild. Doctrine of layers: PUBLIC / OS / COMMERCIAL — jamais mélangés.**
+DATA → CONTEXT → PREPARATION → HUMAN DECISION → EXECUTION → VERIFICATION → FEEDBACK.
+**Integrate before rebuild.** 3 couches séparées : PUBLIC / OS / COMMERCIAL.
 
-## Boucle trust chain (livrée)
-REPO → PING → EVENT → SHA-256 → NOTARY (Ed25519 local Meta CVLN) → DID → LEDGER → .FREK.JSON EXPORT → EXTERNAL VERIFICATION
-Prochaine étape: bridge FREKCORE remote (P1) → ANCHOR / FREK-CHAIN
+## Boucle trust chain complète
+REPO → PING → EVENT → SHA-256 → NOTARY (Ed25519, local ou FREKCORE remote) → DID → LEDGER → .FK EXPORT → EXTERNAL VERIFICATION → (bientôt) ANCHOR / FREK-CHAIN
 
-## 3 couches META CVLN (séparation stricte)
-- **Meta CVLN Public** (`/public`) — vitrine publique dark violet, hero "One ecosystem. Many intelligences.", grille des 12 entités connected+notarized, liens vers /audit et /commercial. Aucune donnée interne.
-- **Meta CVLN OS** (`/` post-login) — l'OS interne : Command Center, Workbench, People/Finance/Legal/Ops/Knowledge, Registry, Agent Factory, Decision, Evidence, Notary Ledger, CVL Brain
-- **Meta CVLN Commercial** (`/commercial`) — offres Starter/Pro/Enterprise/On-Premise, gold accent
-- **Meta CVLN Audit** (`/audit`) — trust chain publique read-only, 31 notarisations signées Ed25519, export `.frek.json` client-side sans auth
+## Format .FK (FREKANSLA FK Object v3)
+Toute notarisation est exportable au format `.fk` conforme FREKANSLA :
+`fk_version, schema=fk.object.v3, issuer, issued_at, event, provenance[observation→hash→signature], fingerprint(sha256), signature(ed25519), public_key, notary(did, source, chain_ref, anchored_at), verification.method`
 
-## Registry (12 repos CONNECTED)
-frekcore, frekansla, cvln_agent_factory, laurentia, cvl_academy, kiltikonet, gala_cook_food, fms_os (labelos:fms), cvln_wallet, cvln_command_center, factory_ops, production_vault — tous ping automatique horaire.
+## Modules livrés
+- 3 couches externes : `/public` (vitrine dense — hero, vision fondateur, FREKCORE focus, 12 entités, partenaires, CTA), `/commercial` (4 offres), `/audit` (ledger public sans auth avec download .fk)
+- OS interne : Command Center, Workbench, People/Finance/Legal/Ops/Knowledge, Registry (12 repos + sparkline + FMS answers), Agent Factory, Decision, Evidence, **Notary Ledger** (filtres repo+status+période), **Weekly Report**, CVL Brain
 
-## Notary
-- Keypair Ed25519 stocké dans `db.system_keys`, DID `did:meta-cvln:413ba83ba91ff0ac`
-- **P0 Signature Export livré** — `GET /api/notarizations/{id}/export` renvoie un artefact `.frek.json` conforme FREK v0.4 : event + fingerprint(sha256) + signature(ed25519) + public_key + notary(did/algorithm) + metadata + verification hint
-- **P2 Auditor Public View livré** — `GET /api/public/notarizations` (sans auth) + page `/audit` avec download par ligne
+## Automation
+- Cron horaire `.emergent/crons.yml` → `/api/cron/registry-ping-all`
+- **Cron hebdomadaire Lundi 08:00 UTC** → `/api/cron/weekly-drop-report` — génère rapport 7j, flag <95%, insert alert dans Command Center
+- Notarisation Ed25519 avec bridge FREKCORE : `NOTARY_MODE=frekcore` + `FREKCORE_NOTARIZE_URL` bascule instantanément vers `did:frek:*` (contract publié dans server.py `_notarize_via_frekcore`)
+
+## FREKCORE Remote Notary — contrat côté FREKCORE
+```
+POST {FREKCORE_NOTARIZE_URL}
+Authorization: Bearer {FREKCORE_API_KEY}
+Body: {"sha256": "<hex>", "issuer": "meta-cvln-os"}
+Response: {"signature_b64", "public_key_b64", "did": "did:frek:...",
+           "algorithm": "ed25519", "anchored_at", "chain_ref"}
+```
+Meta CVLN persiste `notary_source: frekcore | local` + `chain_ref` + `anchored_at` sur chaque signature.
 
 ## Testé
-Ledger 31 signatures, export `.frek.json` conforme, public route accessible sans token, verify renvoie VALID, cron 12/12 CONNECTED.
+- FK v3.0 export end-to-end (provenance chain vérifiable)
+- Filtres ledger : `?repo_key=production_vault` → 3 résultats
+- Weekly cron : 12 repos, 0 flagged, tous 100% uptime, report stocké dans db.reports
+- Meta Public : hero, founder quote, .fk sample container, 12 entités, 6 partenaires, CTA
 
-## P1 backlog restant
-- Bridge FREKCORE Remote Notary (contrat à publier) → did:frek:*
-- Ledger Filter par repo + période
-- Weekly Drop Report (email lundi 9h)
+## P1 backlog
+- Renseigner `FREKCORE_NOTARIZE_URL` quand endpoint publié (une seule ligne .env)
+- Feedback signaler UI
 - Adapters typés cross-repo (labelos.push_catalogue, wallet.transaction, laurentia.briefing)
+
+## P2 backlog
+- Streaming SSE natif CVL Brain
+- OpenTelemetry trace_id cross-repo
+- Adaptive Runtime NORMAL/DEGRADED/CRITICAL
+- Multi-tenant strict par entity

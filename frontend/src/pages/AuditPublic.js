@@ -35,23 +35,24 @@ export default function AuditPublic() {
         trace_id: n.trace_id,
         type: n.target_type,
         target_repo_key: n.target_repo_key,
-        target_repo_name: n.target_repo_name,
+        "target_repo_name": n.target_repo_name,
         status: n.status,
         http: n.http,
         ms: n.ms,
         created_at: n.created_at,
       },
-      fingerprint: `sha256:${n.sha256}`,
-      signature: `ed25519:${n.signature_b64}`,
-      public_key: n.public_key_b64,
-      notary: { did: n.notary_did, algorithm: n.algorithm, issued_by: "meta-cvln-os" },
-      metadata: { timestamp: n.created_at, source_type: n.target_type, schema: "frek.notarization.v1" },
+      fingerprint: { algorithm: "sha256", value: n.sha256 },
+      signature: { algorithm: "ed25519", value: n.signature_b64 },
+      public_key: { algorithm: "ed25519", value: n.public_key_b64 },
+      notary: { did: n.notary_did, source: n.notary_source || "local", algorithm: n.algorithm },
+      schema: "fk.object.v3",
+      fk_version: "3.0",
     };
     const blob = new Blob([JSON.stringify(artifact, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `notarization-${n.id.slice(0, 8)}.frek.json`;
+    a.download = `fk-${n.id.slice(0, 8)}.fk`;
     a.click();
     URL.revokeObjectURL(url);
   }
