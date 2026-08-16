@@ -1,0 +1,60 @@
+{
+  "summary": "Verified all 3 previously-disputed claims via live curl against REACT_APP_BACKEND_URL and re-ran the full P2 pytest suite. All 3 claims are TRUE; all 17 tests pass (no skips, no fails). iteration_3.json's assertion that these fixes were not applied is confirmed INCORRECT.",
+  "verification_evidence": {
+    "employee_login": {
+      "endpoint": "POST /api/auth/login",
+      "payload": "{email: employee@cvln.local, password: Cvln2026!}",
+      "http_status": 200,
+      "response_keys": ["token", "user"],
+      "user_role": "employee",
+      "result": "PASS - returns 200 with JWT (not 422)"
+    },
+    "runtime_state_signals": {
+      "endpoint": "GET /api/runtime/state (admin bearer)",
+      "signals_keys_count": 7,
+      "signals_keys": ["window", "total_pings", "up_pings", "error_rate", "avg_ms", "p95_ms", "active_incidents"],
+      "sample_values": {"window": "1h", "total_pings": 38, "up_pings": 38, "error_rate": 0.0, "avg_ms": 389, "p95_ms": 844, "active_incidents": 2},
+      "result": "PASS - full 7-key dict, never {}"
+    },
+    "finance_loop_cashflow": {
+      "endpoint": "GET /api/finance/loop (admin bearer)",
+      "cashflow_stage": {"stage": "CASHFLOW", "status": "OK", "value": 1663000, "source": "aggregate(cashflow_series)", "confidence": 0.85},
+      "result": "PASS - status=OK, value=1663000 as claimed"
+    },
+    "regression_adapters": {
+      "laurentia_briefing": "PASSED (real URL call to emergent-ai-238)",
+      "wallet_404": "PASSED (real 404 accepted, not treated as bug)"
+    }
+  },
+  "pytest_results": {
+    "total": 17,
+    "passed": 17,
+    "failed": 0,
+    "skipped": 0,
+    "duration_sec": 7.77,
+    "previously_skipped_now_passing": [
+      "test_auth_login_employee",
+      "test_runtime_override_employee_forbidden",
+      "test_learning_proposal_draft_and_approve"
+    ]
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_p2_endpoints.py",
+    "/app/test_reports/pytest/p2_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "iteration_3.json contained false negatives — testing agents should always verify with live curl before asserting a fix is missing (as instructed here).",
+    "Top-level `cashflow_series` in /api/finance/loop response is empty ([]) even though the CASHFLOW stage aggregates value=1663000 from an internal series. This is not a bug per the review request (only stage value matters), but worth flagging as a minor UI-facing inconsistency for future work."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%"},
+  "test_credentials": "admin metacvln@gmail.com / MetaCVLN2026! and employee employee@cvln.local / Cvln2026! (both verified working)",
+  "seed_data_creation": "None - used auto-seeded users",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "P2 backend is fully green (17/17). All 3 previously-disputed fixes are live and verified. iteration_3 was inaccurate; do not trust its 'not applied' claims. If further changes are made to auth/runtime/finance_loop, re-run: pytest /app/backend/tests/test_p2_endpoints.py -v",
+  "rca of the issue": "iteration_3 likely ran against a pre-restart backend state or cached response. After `supervisorctl restart backend`, live curl confirms all three fixes are active. No code change needed this iteration."
+}

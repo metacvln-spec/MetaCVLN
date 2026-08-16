@@ -6,6 +6,10 @@ import CommandCenter from "./pages/CommandCenter";
 import Workbench from "./pages/Workbench";
 import PeopleOS from "./pages/PeopleOS";
 import FinanceOS from "./pages/FinanceOS";
+import FinanceLoop from "./pages/FinanceLoop";
+import PeopleLoop from "./pages/PeopleLoop";
+import AdaptiveRuntime from "./pages/AdaptiveRuntime";
+import LearningProposals from "./pages/LearningProposals";
 import LegalOS from "./pages/LegalOS";
 import OpsOS from "./pages/OpsOS";
 import KnowledgeOS from "./pages/KnowledgeOS";
@@ -58,6 +62,10 @@ export default function App() {
             <Route path="/workbench" element={<Workbench />} />
             <Route path="/people" element={<PeopleOS />} />
             <Route path="/finance" element={<FinanceOS />} />
+            <Route path="/finance-loop" element={<FinanceLoop />} />
+            <Route path="/people-loop" element={<PeopleLoop />} />
+            <Route path="/runtime" element={<AdaptiveRuntime />} />
+            <Route path="/learning" element={<LearningProposals />} />
             <Route path="/legal" element={<LegalOS />} />
             <Route path="/ops" element={<OpsOS />} />
             <Route path="/knowledge" element={<KnowledgeOS />} />

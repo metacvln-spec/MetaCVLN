@@ -1,0 +1,33 @@
+{
+  "summary": "Re-ran /app/backend/tests/test_p2_endpoints.py after main agent claimed 3 fixes. Result identical to iteration_2: 14 passed, 3 skipped. NONE of the 3 claimed fixes are actually present in /app/backend/server.py. Employee login still returns 422 (EmailStr rejects '*.local' TLD), causing the 3 employee-dependent tests to be skipped by the fixture. Runtime signals shape and finance CASHFLOW-vs-0 fixes are also missing from source.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/auth/login", "issue": "LoginBody.email is still EmailStr (server.py line 107, EmailStr imported line 19). Curl to $REACT_APP_BACKEND_URL/api/auth/login with employee@cvln.local returns 422 'value is not a valid email address: The part after the @-sign is a special-use or reserved name that cannot be used with email'. Fix (change `email: EmailStr` to `email: str`) was NOT applied.", "priority": "HIGH"},
+      {"endpoint": "GET /api/runtime/state", "issue": "_compute_runtime_mode (server.py line 690-691) still returns `signals: {}` when ping_history is empty, instead of a full signals dict with keys total_pings/error_rate/p95_ms/active_incidents/window. Fix NOT applied.", "priority": "HIGH"},
+      {"endpoint": "GET /api/finance/loop CASHFLOW stage", "issue": "server.py line 837 still uses `sum([...]) or None`, which coerces a valid 0 sum into None and therefore reports DATA_NOT_AVAILABLE even when cashflow_series is non-empty. Explicit None check on empty series NOT applied.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_p2_endpoints.py",
+    "/app/test_reports/pytest/iteration_3_results.xml"
+  ],
+  "action_items": [
+    "Actually apply the 3 fixes to /app/backend/server.py: (a) line 107 change `email: EmailStr` -> `email: str` (and optionally drop EmailStr import on line 19); (b) line 690-691 return the full signals dict with 0/empty defaults for total_pings, up_pings, error_rate, avg_ms, p95_ms, active_incidents and window='1h' when recent is empty; (c) line 837 replace `sum([...]) or None` with an explicit `None if not snap.get('cashflow_series') else sum(...)`.",
+    "After applying, re-run: pytest /app/backend/tests/test_p2_endpoints.py -v — expected 17/17 pass."
+  ],
+  "critical_code_review_comments": [
+    "Main agent reported these fixes as applied but the diffs are not in the source file — likely edit was lost or applied to wrong file/branch.",
+    "server.py is 1489 lines — approaching size where a split into routers (auth, runtime, finance, people, learning, registry) would improve maintainability.",
+    "EmailStr for internal *.local service accounts will always fail; use str + a lightweight regex if validation is needed."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "82% (14/17 executed, 3 skipped due to unresolved bug)", "frontend": "N/A"},
+  "test_credentials": "Used /app/memory/test_credentials.md: admin metacvln@gmail.com/MetaCVLN2026! (works), employee employee@cvln.local/Cvln2026! (blocked by EmailStr 422).",
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The 3 fixes claimed in iteration_2 handoff were NOT actually written to /app/backend/server.py. Verify with `grep -n 'EmailStr\\|or None' /app/backend/server.py` — you will still see EmailStr on line 107 and `or None` on line 837. Once fixes land, the same test file will unskip the 3 employee tests and all 17 should pass.",
+  "rca of the issue": "Skipped tests in iteration_2 = employee login 422 (EmailStr rejects .local TLD). Reproduction: `curl -X POST $REACT_APP_BACKEND_URL/api/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"employee@cvln.local\",\"password\":\"Cvln2026!\"}'` -> HTTP 422. Mitigation: change LoginBody.email type to `str` in server.py line 107. Same pattern applies to the two other claimed fixes — none were actually persisted."
+}

@@ -104,7 +104,7 @@ def require_role(*roles: str):
 # Models
 # ------------------------------------------------------------------
 class LoginBody(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 
@@ -548,6 +548,350 @@ async def verify_notarization(notarization_id: str, user: dict = Depends(get_cur
         return {"valid": True, "algorithm": "ed25519", "notary_did": key["did"]}
     except Exception as e:
         return {"valid": False, "reason": str(e)[:120]}
+
+
+# ------------------------------------------------------------------
+# Signed events — Ed25519 on every important event (extension v1.1)
+# ------------------------------------------------------------------
+async def _sign_payload(payload: str) -> Dict[str, Any]:
+    priv, pub_b64, did = await _get_or_create_notary_key()
+    sig = priv.sign(payload.encode())
+    return {
+        "algorithm": "ed25519",
+        "key_id": did,
+        "signature_b64": _b64.b64encode(sig).decode(),
+        "public_key_b64": pub_b64,
+        "signed_at": datetime.now(timezone.utc).isoformat(),
+        "sha256": _hashlib.sha256(payload.encode()).hexdigest(),
+    }
+
+
+@api.post("/events/emit")
+async def emit_signed_event(payload: Dict[str, Any], user: dict = Depends(get_current_user)):
+    """Emit a signed event on the internal bus. Extension of Event v1.0
+    keeps backward-compat by nesting the signature envelope."""
+    event_id = str(uuid.uuid4())
+    trace_id = payload.get("trace_id") or str(uuid.uuid4())
+    body = {
+        "contract": "event", "version": "1.0",
+        "id": event_id, "trace_id": trace_id,
+        "type": payload.get("type", "custom"),
+        "source_system": payload.get("source_system", "meta-cvln-os"),
+        "payload": payload.get("payload", {}),
+        "priority": payload.get("priority", 3),
+        "confidence": payload.get("confidence", 1.0),
+        "actor": {"id": user["id"], "email": user["email"], "role": user["role"]},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    canonical = f"{body['id']}|{body['trace_id']}|{body['type']}|{body['timestamp']}"
+    sig = await _sign_payload(canonical)
+    body["signed"] = True
+    body["signature_b64"] = sig["signature_b64"]
+    body["public_key_b64"] = sig["public_key_b64"]
+    body["key_id"] = sig["key_id"]
+    await db.signed_events.insert_one(dict(body))
+    return body
+
+
+@api.post("/events/verify")
+async def verify_signed_event(payload: Dict[str, Any]):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey as _Pub
+    try:
+        canonical = f"{payload['id']}|{payload['trace_id']}|{payload['type']}|{payload['timestamp']}"
+        pub = _Pub.from_public_bytes(_b64.b64decode(payload["public_key_b64"]))
+        pub.verify(_b64.b64decode(payload["signature_b64"]), canonical.encode())
+        return {"valid": True, "algorithm": "ed25519", "key_id": payload.get("key_id")}
+    except Exception as e:
+        return {"valid": False, "reason": str(e)[:120], "action": "quarantined"}
+
+
+# ------------------------------------------------------------------
+# Capability Auto-Discovery
+# ------------------------------------------------------------------
+@api.post("/registry/discover-all")
+async def discover_all(user: dict = Depends(get_current_user)):
+    """Attempt GET /api/capabilities on every repo with a preview_url and
+    store discovered capabilities + set lifecycle_status."""
+    import asyncio
+    import requests as _rq
+    import time
+
+    repos = await db.repositories.find({}, {"_id": 0}).to_list(50)
+    results = []
+
+    def _fetch(url, headers):
+        t0 = time.time()
+        try:
+            r = _rq.get(url, headers=headers, timeout=6)
+            ms = int((time.time() - t0) * 1000)
+            try:
+                data = r.json()
+            except Exception:
+                data = None
+            return r.status_code, ms, data, None
+        except Exception as e:
+            return None, int((time.time() - t0) * 1000), None, str(e)[:200]
+
+    for r in repos:
+        base = r.get("preview_url")
+        if not base:
+            await db.repositories.update_one(
+                {"id": r["id"]},
+                {"$set": {"lifecycle_status": "UNKNOWN", "discovery_at": datetime.now(timezone.utc).isoformat()}}
+            )
+            results.append({"repo": r["key"], "status": "UNKNOWN", "reason": "no_preview_url"})
+            continue
+        headers = {}
+        if r.get("auth_type") == "bearer" and r.get("api_key"):
+            headers["Authorization"] = f"Bearer {r['api_key']}"
+        elif r.get("auth_type") == "api_key" and r.get("api_key"):
+            headers["X-API-Key"] = r["api_key"]
+        url = base.rstrip("/") + "/api/capabilities"
+        code, ms, data, err = await asyncio.to_thread(_fetch, url, headers)
+        if code and code < 400 and isinstance(data, list):
+            lifecycle = "HEALTHY"
+            discovered = data
+        elif code and code == 404:
+            lifecycle = "DEGRADED"
+            discovered = []
+        elif code is None:
+            lifecycle = "UNAVAILABLE"
+            discovered = []
+        else:
+            lifecycle = "DEGRADED"
+            discovered = []
+        upd = {
+            "lifecycle_status": lifecycle,
+            "discovery_at": datetime.now(timezone.utc).isoformat(),
+            "discovery_http": code,
+            "discovery_ms": ms,
+            "discovery_error": err,
+            "discovered_capabilities": discovered,
+            "discovered_capabilities_count": len(discovered),
+        }
+        await db.repositories.update_one({"id": r["id"]}, {"$set": upd})
+        results.append({"repo": r["key"], "status": lifecycle, "http": code, "ms": ms,
+                        "capabilities_count": len(discovered)})
+        await write_evidence(user, "registry.discover", "repository", r["id"],
+                              output_data={"lifecycle": lifecycle, "count": len(discovered)})
+
+    return {"results": results, "healthy": sum(1 for x in results if x["status"] == "HEALTHY"),
+            "degraded": sum(1 for x in results if x["status"] == "DEGRADED"),
+            "unavailable": sum(1 for x in results if x["status"] == "UNAVAILABLE"),
+            "total": len(results)}
+
+
+# ------------------------------------------------------------------
+# Adaptive Runtime (NORMAL / DEGRADED / CRITICAL)
+# ------------------------------------------------------------------
+async def _compute_runtime_mode() -> dict:
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    recent = await db.ping_history.find({"timestamp": {"$gte": since}}, {"_id": 0}).to_list(500)
+    active_incidents = await db.incidents.count_documents({"status": {"$ne": "resolved"}})
+    if not recent:
+        return {
+            "mode": "normal" if active_incidents == 0 else "degraded",
+            "reason": "no ping signal in window",
+            "signals": {
+                "window": "1h",
+                "total_pings": 0,
+                "up_pings": 0,
+                "error_rate": 0.0,
+                "avg_ms": 0,
+                "p95_ms": 0,
+                "active_incidents": active_incidents,
+            },
+            "policy": {
+                "critical_if": "error_rate>=0.30 OR p95_ms>=5000 OR incidents>=3",
+                "degraded_if": "error_rate>=0.10 OR p95_ms>=2500 OR incidents>=1",
+            },
+            "computed_at": datetime.now(timezone.utc).isoformat(),
+        }
+    total = len(recent)
+    up = sum(1 for x in recent if x.get("status") == "CONNECTED")
+    err_rate = round((total - up) / total, 3)
+    ms_series = sorted([x.get("ms", 0) for x in recent])
+    avg_ms = int(sum(ms_series) / total)
+    idx = min(total - 1, max(0, int(0.95 * (total - 1))))
+    p95_ms = ms_series[idx]
+    if err_rate >= 0.30 or p95_ms >= 5000 or active_incidents >= 3:
+        mode = "critical"
+    elif err_rate >= 0.10 or p95_ms >= 2500 or active_incidents >= 1:
+        mode = "degraded"
+    else:
+        mode = "normal"
+    return {
+        "mode": mode,
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        "signals": {
+            "window": "1h",
+            "total_pings": total,
+            "up_pings": up,
+            "error_rate": err_rate,
+            "avg_ms": avg_ms,
+            "p95_ms": p95_ms,
+            "active_incidents": active_incidents,
+        },
+        "policy": {
+            "critical_if": "error_rate>=0.30 OR p95_ms>=5000 OR incidents>=3",
+            "degraded_if": "error_rate>=0.10 OR p95_ms>=2500 OR incidents>=1",
+        },
+    }
+
+
+@api.get("/runtime/state")
+async def runtime_state(user: dict = Depends(get_current_user)):
+    return await _compute_runtime_mode()
+
+
+@api.post("/runtime/state/override")
+async def runtime_override(payload: Dict[str, Any], user: dict = Depends(require_role("admin"))):
+    mode = payload.get("mode")
+    if mode not in ("normal", "degraded", "critical"):
+        raise HTTPException(400, "invalid mode")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "mode": mode,
+        "reason": payload.get("reason", "manual override"),
+        "actor": user["email"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.runtime_overrides.insert_one(dict(doc))
+    await write_evidence(user, "runtime.override", "runtime", doc["id"],
+                          input_data={"mode": mode})
+    return doc
+
+
+# ------------------------------------------------------------------
+# Learning Validation — proposals from feedback
+# ------------------------------------------------------------------
+class ProposalBody(BaseModel):
+    subject: str
+    old_doctrine: Optional[str] = None
+    new_doctrine: str
+    supporting_feedback_ids: List[str] = []
+    expected_impact: Optional[str] = None
+    affected_systems: List[str] = []
+
+
+@api.post("/learning/proposals")
+async def create_proposal(body: ProposalBody, user: dict = Depends(get_current_user)):
+    threshold = int(os.environ.get("LEARNING_PROPOSAL_THRESHOLD", "3"))
+    supporting = 0
+    if body.supporting_feedback_ids:
+        supporting = await db.feedback.count_documents({"id": {"$in": body.supporting_feedback_ids}})
+    doc = {
+        "id": str(uuid.uuid4()),
+        "subject": body.subject,
+        "old_doctrine": body.old_doctrine,
+        "new_doctrine": body.new_doctrine,
+        "supporting_feedback_ids": body.supporting_feedback_ids,
+        "supporting_count": supporting,
+        "threshold": threshold,
+        "expected_impact": body.expected_impact,
+        "affected_systems": body.affected_systems,
+        "status": "pending" if supporting >= threshold else "draft",
+        "author": {"id": user["id"], "email": user["email"], "role": user["role"]},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.learning_proposals.insert_one(dict(doc))
+    await write_evidence(user, "learning.propose", "proposal", doc["id"],
+                          input_data={"subject": body.subject},
+                          output_data={"status": doc["status"], "supporting": supporting})
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/learning/proposals")
+async def list_proposals(user: dict = Depends(get_current_user)):
+    return await db.learning_proposals.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api.post("/learning/proposals/{proposal_id}/approve")
+async def approve_proposal(proposal_id: str, user: dict = Depends(require_role("admin"))):
+    p = await db.learning_proposals.find_one({"id": proposal_id})
+    if not p:
+        raise HTTPException(404, "Proposal not found")
+    ts = datetime.now(timezone.utc).isoformat()
+    await db.learning_proposals.update_one(
+        {"id": proposal_id},
+        {"$set": {"status": "approved", "approved_by": user["email"], "approved_at": ts}}
+    )
+    await db.doctrine_history.insert_one({
+        "id": str(uuid.uuid4()),
+        "proposal_id": proposal_id,
+        "old_doctrine": p.get("old_doctrine"),
+        "new_doctrine": p["new_doctrine"],
+        "author": p.get("author"),
+        "approved_by": user["email"],
+        "approved_at": ts,
+        "evidence": {"supporting": p.get("supporting_count"), "threshold": p.get("threshold")},
+    })
+    await write_evidence(user, "learning.approve", "proposal", proposal_id, approval="approve")
+    return {"ok": True, "status": "approved"}
+
+
+# ------------------------------------------------------------------
+# Financial + Human loop maps
+# ------------------------------------------------------------------
+@api.get("/finance/loop")
+async def finance_loop(user: dict = Depends(get_current_user)):
+    snap = await db.finance_snapshot.find_one({}, {"_id": 0}) or {}
+    ts = snap.get("updated_at")
+    def _stage(name, value, source):
+        return {
+            "stage": name,
+            "value": value,
+            "source": source,
+            "timestamp": ts,
+            "confidence": 0.85 if value is not None else 0.0,
+            "provenance": "finance_snapshot" if value is not None else None,
+            "status": "OK" if value is not None else "DATA_NOT_AVAILABLE",
+        }
+    series = snap.get("cashflow_series", [])
+    cashflow_value = sum(m["in"] - m["out"] for m in series) if series else None
+    stages = [
+        _stage("REVENUE", snap.get("revenue_ytd_eur"), "finance_snapshot.revenue_ytd_eur"),
+        _stage("COST", None, "not tracked yet"),
+        _stage("MARGIN", snap.get("gross_margin_pct"), "finance_snapshot.gross_margin_pct"),
+        _stage("CASHFLOW", cashflow_value, "aggregate(cashflow_series)"),
+        _stage("RESERVES", snap.get("cash_position_eur"), "finance_snapshot.cash_position_eur"),
+        _stage("CAPITAL_ALLOCATION", None, "not tracked yet"),
+        _stage("INVESTMENT", None, "not tracked yet"),
+        _stage("RESULT", snap.get("ebitda_eur"), "finance_snapshot.ebitda_eur"),
+        _stage("FEEDBACK", await db.feedback.count_documents({"module": "finance_os"}), "feedback[module=finance_os]"),
+    ]
+    bottleneck = next((s["stage"] for s in stages if s["status"] == "DATA_NOT_AVAILABLE"), None)
+    return {"stages": stages, "bottleneck": bottleneck, "loop_health": "partial"}
+
+
+@api.get("/people/loop")
+async def people_loop(user: dict = Depends(get_current_user)):
+    def _stage(name, count, source):
+        return {
+            "stage": name,
+            "count": count,
+            "source": source,
+            "status": "OK" if count is not None else "DATA_NOT_AVAILABLE",
+        }
+    onboarding = await db.people.count_documents({"status": "onboarding"})
+    active = await db.people.count_documents({"status": "active"})
+    objectives = await db.objectives.count_documents({})
+    stages = [
+        _stage("ACADEMY", None, "cvl_academy adapter — not connected yet"),
+        _stage("TRAINING", None, "not tracked yet"),
+        _stage("CERTIFICATION", None, "cvl_academy issue_certification"),
+        _stage("JURY", None, "not tracked yet"),
+        _stage("TALENT", active + onboarding, "people(all)"),
+        _stage("RECRUITMENT", onboarding, "people(status=onboarding)"),
+        _stage("ONBOARDING", onboarding, "people(status=onboarding)"),
+        _stage("WORK", active, "people(status=active)"),
+        _stage("DEVELOPMENT", objectives, "objectives(count)"),
+        _stage("LEADERSHIP", None, "not tracked yet"),
+        _stage("SUCCESSION", None, "not tracked yet"),
+    ]
+    bottleneck = next((s["stage"] for s in stages if s["status"] == "DATA_NOT_AVAILABLE"), None)
+    return {"stages": stages, "bottleneck": bottleneck, "loop_health": "partial"}
 
 
 @api.post("/registry/repositories/{repo_id}/ping")

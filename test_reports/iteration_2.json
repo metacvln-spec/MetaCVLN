@@ -1,0 +1,53 @@
+{
+  "summary": "P2 backend testing complete. 14/17 pytest cases passed, 3 skipped due to a real backend auth bug: non-admin seeded users (*@cvln.local) cannot login because pydantic EmailStr rejects the .local TLD as a special-use reserved name (HTTP 422). Admin login works. All new P2 endpoints (discover-all, runtime/state, runtime/state/override for admin, events emit+verify+tamper, finance/loop 9 stages, people/loop 11 stages) work correctly. Light regression on command-center, registry, notarizations, contracts, adapters all pass. Registry has 12 repos, discover-all populates lifecycle_status+discovery_at on all 12.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/auth/login",
+        "issue": "LoginBody.email uses pydantic EmailStr; email-validator rejects `employee@cvln.local` (and cfo/hr/ops/legal @cvln.local) with 422 'The part after the @-sign is a special-use or reserved name that cannot be used with email.' This blocks ALL 5 non-admin seeded users from ever logging in, making role/RBAC flows untestable end-to-end (employee 403 checks, cfo/hr overview, etc).",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/runtime/state",
+        "issue": "When ping_history is empty in the last hour, `signals` is returned as an empty {} — spec says signals must always include {total_pings,error_rate,p95_ms,active_incidents}. Currently only guaranteed when there is data."
+      },
+      {
+        "endpoint": "/api/finance/loop",
+        "issue": "CASHFLOW stage uses `sum(...) or None` — if the aggregate legitimately equals 0 it will be reported as DATA_NOT_AVAILABLE. Use explicit None check on empty series instead."
+      }
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_p2_endpoints.py",
+    "/app/test_reports/pytest/p2_results.xml"
+  ],
+  "action_items": [
+    "FIX auth: either (a) change LoginBody.email from EmailStr to plain str (login already validates via DB lookup) or (b) change seeded internal emails from `*@cvln.local` to a non-reserved TLD (e.g. `@cvln.dev` or `@cvln.internal` is also reserved; use `@cvln.io`/`@cvln.co`). Recommendation: option (a) is safer and matches how many real prod systems accept `.local` addresses.",
+    "Also update /app/memory/test_credentials.md if emails are changed.",
+    "Ensure /api/runtime/state always returns full `signals` object even when window empty.",
+    "Fix CASHFLOW 0-vs-None ambiguity in /api/finance/loop."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1488 lines — well over the 700-line limit. Should be split into modules (auth, registry, events, learning, finance, people, adapters).",
+    "Multiple GET endpoints return mixed shapes: /api/registry/repositories returns {repositories,count}, /api/notarizations returns {notarizations,notary,count,filters}, /api/contracts returns {contracts,count}. Consistent with a wrapper convention but should be documented — tests and clients cannot assume list.",
+    "LoginBody.email=EmailStr rejects legitimate internal TLDs (.local). Prefer str + custom light validation.",
+    "/api/events/verify catches broad Exception and returns 200 with valid:false — acceptable for quarantine semantics, but error string is exposed (`reason: str(e)[:120]`). Consider redacting.",
+    "_compute_runtime_mode uses `int(0.95 * total)` for p95 index — off-by-one when total is small; use statistics.quantiles or interpolation for correctness.",
+    "discover-all does synchronous _rq.get in asyncio.to_thread but sequentially across 12 repos — could take up to 12*6s=72s. Consider asyncio.gather.",
+    "Finance CASHFLOW: `sum([...]) or None` collapses valid 0 to None."
+  ],
+  "updated_files": [
+    "/app/backend/tests/__init__.py (new)",
+    "/app/backend/tests/test_p2_endpoints.py (new)"
+  ],
+  "success_rate": {"backend": "82% (14/17 passed, 3 skipped due to auth bug — 0 failed)", "frontend": "N/A (backend-only run)"},
+  "test_credentials": "Admin metacvln@gmail.com / MetaCVLN2026! works. All 5 *@cvln.local employees blocked by EmailStr validation (see critical issue).",
+  "seed_data_creation": "Created 1 signed event, 1 tampered event, 1 runtime override (mode=critical). No proposal/feedback created (employee login blocked).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes the EmailStr issue, re-run pytest /app/backend/tests/test_p2_endpoints.py — the 3 skipped tests (test_auth_login_employee, test_runtime_override_employee_forbidden, test_learning_proposal_draft_and_approve) should then pass. RBAC 403 assertion for /runtime/state/override and /learning/proposals/{id}/approve depends on employee login working.",
+  "rca of the issue": "RCA: /app/backend/server.py:107 defines `class LoginBody(BaseModel): email: EmailStr`. Pydantic v2 email-validator classifies `.local` as a special-use / reserved TLD per RFC 6761 and refuses it, returning HTTP 422 before the handler even runs. seed_data.py seeds five internal users with @cvln.local addresses (per /app/memory/test_credentials.md), so none of them can authenticate. Reproduce: curl -sS -X POST $URL/api/auth/login -H 'content-type: application/json' -d '{\"email\":\"employee@cvln.local\",\"password\":\"Cvln2026!\"}' → 422. Mitigation options: (1) change `email: EmailStr` → `email: str` in LoginBody (login already validated against DB), (2) rename seeded emails to a non-reserved TLD, (3) monkey-patch email_validator to allow special-use domains. Option 1 is the least invasive."
+}
