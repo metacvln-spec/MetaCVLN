@@ -66,6 +66,7 @@ REPOSITORIES = [
         "branch": "main",
         "layer": "Trust Layer",
         "role": "Identity, provenance & cultural notarization",
+        "preview_url": "https://frekcore-certify.preview.emergentagent.com",
         "description": (
             "Open protocol for verifying DJ mixes and musical performances. "
             "Cryptographic proof (Ed25519) without surveillance. Offline-first — "
@@ -75,7 +76,6 @@ REPOSITORIES = [
         "tech_stack": ["React", "Ed25519", "Zod", "SHA-256"],
         "capabilities": ["notarize_action", "verify_signature", "issue_frek_json"],
         "routes": ["/", "/industry", "/docs/*", "/app"],
-        "preview_url": None,
         "auth_type": "none",
         "principles": [
             "FREK does not judge music",
@@ -119,7 +119,7 @@ REPOSITORIES = [
             "detect_tampering",
         ],
         "routes": ["/", "/creative-engine", "/master-certifier"],
-        "preview_url": None,
+        "preview_url": "https://groove-studio-21.preview.emergentagent.com",
         "auth_type": "bearer",
         "adapter_status": "NOT_CONNECTED",
         "health": "green",
@@ -141,7 +141,7 @@ REPOSITORIES = [
         "tech_stack": ["FastAPI", "React", "MongoDB"],
         "capabilities": ["create_agent", "compose_agents", "expose_capability", "heartbeat"],
         "routes": ["/", "/os"],
-        "preview_url": None,
+        "preview_url": "https://agent-factory-68.preview.emergentagent.com",
         "auth_type": "bearer",
         "adapter_status": "NOT_CONNECTED",
         "health": "green",
@@ -209,7 +209,7 @@ REPOSITORIES = [
             "connect_frekcore",
         ],
         "routes": ["/", "/os"],
-        "preview_url": None,
+        "preview_url": "https://culture-builder-4.preview.emergentagent.com",
         "auth_type": "bearer",
         "adapter_status": "NOT_CONNECTED",
         "health": "amber",
@@ -256,7 +256,7 @@ REPOSITORIES = [
         "routes": ["/", "/pro", "/network", "/admin/core", "/espace-pro/connexion", "/scan"],
         "iteration": "97",
         "test_status": "backend + frontend 100%",
-        "preview_url": None,
+        "preview_url": "https://culture-chain.preview.emergentagent.com",
         "auth_type": "bearer",
         "adapter_status": "NOT_CONNECTED",
         "health": "green",
@@ -290,7 +290,7 @@ REPOSITORIES = [
             "/cercle-restreint", "/founders-circle", "/sur-invitation",
             "/contact", "/login", "/admin", "/portail"
         ],
-        "preview_url": None,
+        "preview_url": "https://tarifs-update.preview.emergentagent.com",
         "auth_type": "bearer",
         "adapter_status": "NOT_CONNECTED",
         "health": "green",
@@ -332,9 +332,88 @@ REPOSITORIES = [
         ],
         "routes": ["/", "/os", "/os/cms", "/os/news", "/os/integrations"],
         "founder_email": "anbatolmq@gmail.com",
-        "preview_url": None,
+        "preview_url": "https://dsp-pipeline.preview.emergentagent.com",
         "auth_type": "bearer",
         "resolved_questions": True,
+        "adapter_status": "NOT_CONNECTED",
+        "health": "green",
+    },
+    {
+        "key": "cvln_wallet",
+        "name": "CVLN Wallet — Revolut-style",
+        "org": "cvln",
+        "github_url": "https://github.com/cultureconnectorg/cvln-wallet",
+        "branch": "main",
+        "layer": "Infrastructure",
+        "role": "Possession & transfert de valeur",
+        "description": (
+            "Couche wallet façon Revolut : soldes multi-entités, transferts, "
+            "notarisation FREKCORE de chaque transaction, ancrage CVLN Blockchain."
+        ),
+        "tech_stack": ["React", "FastAPI", "MongoDB"],
+        "capabilities": ["wallet_balance", "wallet_transfer", "wallet_history"],
+        "preview_url": "https://revolut-style-wallet.preview.emergentagent.com",
+        "auth_type": "bearer",
+        "adapter_status": "NOT_CONNECTED",
+        "health": "green",
+    },
+    {
+        "key": "cvln_command_center",
+        "name": "CVLN Command Center (source)",
+        "org": "cvln",
+        "github_url": "https://github.com/cultureconnectorg/cvln-command-center",
+        "branch": "main",
+        "layer": "Control Plane",
+        "role": "Control plane originel — classify · route · alert",
+        "description": (
+            "Command Center historique de l'écosystème CVLN. Meta CVLN OS agit "
+            "comme méta-vue au-dessus : il aggrège, présente et journalise, "
+            "sans réécrire le CC source."
+        ),
+        "tech_stack": ["FastAPI", "React", "MongoDB"],
+        "capabilities": ["classify_event", "route_decision", "alert"],
+        "preview_url": "https://command-center-524.preview.emergentagent.com",
+        "auth_type": "bearer",
+        "adapter_status": "NOT_CONNECTED",
+        "health": "green",
+    },
+    {
+        "key": "factory_ops",
+        "name": "Factory Ops",
+        "org": "fms-stack",
+        "github_url": "https://github.com/fms-stack/factory-ops",
+        "branch": "main",
+        "layer": "Product",
+        "role": "Opérations Factory Maker Studio",
+        "description": (
+            "Layer opérationnel de FMS : sessions studio, plannings, réservations. "
+            "Se branche à FREKANSLA pour la certification des masters et à "
+            "LabelOS/FMS pour l'export catalogue."
+        ),
+        "tech_stack": ["React", "FastAPI"],
+        "capabilities": ["studio_sessions", "planning", "reservations"],
+        "preview_url": "https://factory-ops-51.preview.emergentagent.com",
+        "auth_type": "bearer",
+        "adapter_status": "NOT_CONNECTED",
+        "health": "green",
+    },
+    {
+        "key": "production_vault",
+        "name": "Production Vault",
+        "org": "fms-stack",
+        "github_url": "https://github.com/fms-stack/production-vault",
+        "branch": "main",
+        "layer": "Infrastructure",
+        "role": "Coffre-fort de production (assets · masters · contrats)",
+        "description": (
+            "Stockage souverain des masters, stems, contrats et pièces "
+            "administratives. Provenance FREKCORE obligatoire pour toute pièce "
+            "entrant dans le coffre."
+        ),
+        "tech_stack": ["FastAPI", "Object Storage"],
+        "capabilities": ["vault_store", "vault_retrieve", "vault_seal_frekcore"],
+        "preview_url": "https://production-vault-5.preview.emergentagent.com",
+        "auth_type": "bearer",
         "adapter_status": "NOT_CONNECTED",
         "health": "green",
     },

@@ -15,6 +15,7 @@ const NAV = [
   { to: "/agents", label: "Agent Factory", scope: "agent_factory" },
   { to: "/decisions", label: "Decision System", scope: "decisions" },
   { to: "/evidence", label: "Evidence & Audit", scope: "evidence" },
+  { to: "/notarizations", label: "Notary Ledger", scope: "notarizations" },
   { to: "/brain", label: "CVL Brain", scope: "brain" },
 ];
 

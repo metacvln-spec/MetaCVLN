@@ -282,6 +282,70 @@ async def config_repository(repo_id: str, body: RegistryConfigBody,
     return {"ok": True, "updated": list(upd.keys())}
 
 
+# ------------------------------------------------------------------
+# FREKCORE-compatible Ed25519 notary (real signatures)
+# ------------------------------------------------------------------
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey, Ed25519PublicKey
+)
+from cryptography.hazmat.primitives import serialization
+import base64 as _b64
+import hashlib as _hashlib
+
+
+async def _get_or_create_notary_key():
+    """Meta CVLN OS holds an Ed25519 keypair used to notarize until the
+    external FREKCORE notarize endpoint contract is published."""
+    doc = await db.system_keys.find_one({"name": "meta-cvln-notary"})
+    if doc:
+        priv = Ed25519PrivateKey.from_private_bytes(_b64.b64decode(doc["private_b64"]))
+        return priv, doc["public_b64"], doc.get("did", "did:meta-cvln:notary")
+    priv = Ed25519PrivateKey.generate()
+    priv_raw = priv.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    pub_raw = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    pub_b64 = _b64.b64encode(pub_raw).decode()
+    did = f"did:meta-cvln:{_hashlib.sha256(pub_raw).hexdigest()[:16]}"
+    await db.system_keys.insert_one({
+        "name": "meta-cvln-notary",
+        "algorithm": "ed25519",
+        "did": did,
+        "public_b64": pub_b64,
+        "private_b64": _b64.b64encode(priv_raw).decode(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return priv, pub_b64, did
+
+
+@api.get("/notarizations")
+async def list_notarizations(user: dict = Depends(get_current_user)):
+    docs = await db.frek_notarizations.find({}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+    key = await db.system_keys.find_one({"name": "meta-cvln-notary"}, {"_id": 0, "private_b64": 0})
+    return {"notarizations": docs, "notary": key or {}, "count": len(docs)}
+
+
+@api.post("/notarizations/{notarization_id}/verify")
+async def verify_notarization(notarization_id: str, user: dict = Depends(get_current_user)):
+    n = await db.frek_notarizations.find_one({"id": notarization_id}, {"_id": 0})
+    if not n:
+        raise HTTPException(404, "Notarization not found")
+    key = await db.system_keys.find_one({"name": "meta-cvln-notary"})
+    if not key:
+        return {"valid": False, "reason": "no_key"}
+    try:
+        pub = Ed25519PublicKey.from_public_bytes(_b64.b64decode(key["public_b64"]))
+        pub.verify(_b64.b64decode(n["signature_b64"]), n["sha256"].encode())
+        return {"valid": True, "algorithm": "ed25519", "notary_did": key["did"]}
+    except Exception as e:
+        return {"valid": False, "reason": str(e)[:120]}
+
+
 @api.post("/registry/repositories/{repo_id}/ping")
 async def ping_repository(repo_id: str, user: dict = Depends(get_current_user)):
     result = await _ping_repo(repo_id, actor=user)
@@ -349,15 +413,21 @@ async def _ping_repo(repo_id: str, actor: Optional[dict] = None) -> Dict[str, An
         "url": url,
     }
 
-    # Notarize (best-effort): if FREKCORE is CONNECTED, sign hash of the ping
+    # Notarize (best-effort): if FREKCORE is CONNECTED, real Ed25519 signature
     frekcore = await db.repositories.find_one({"id": "repo-frekcore"})
     if frekcore and frekcore.get("adapter_status") == "CONNECTED" and repo_id != "repo-frekcore":
         payload = f"{repo_id}|{ts}|{status}|{http_code}|{ms}".encode()
         digest = hashlib.sha256(payload).hexdigest()
+        priv, pub_b64, did = await _get_or_create_notary_key()
+        signature = priv.sign(digest.encode())
+        sig_b64 = _b64.b64encode(signature).decode()
         ping_doc["notarization"] = {
-            "notary": "FREKCORE",
+            "notary": "FREKCORE-compatible (meta-cvln-local)",
+            "notary_did": did,
             "sha256": digest,
-            "algorithm": "sha256+frek_pending_ed25519",
+            "algorithm": "ed25519",
+            "signature_b64": sig_b64,
+            "public_key_b64": pub_b64,
             "notarized_at": ts,
         }
         await db.frek_notarizations.insert_one({
@@ -366,7 +436,15 @@ async def _ping_repo(repo_id: str, actor: Optional[dict] = None) -> Dict[str, An
             "target_type": "registry.ping",
             "target_id": ping_doc["id"],
             "target_repo_key": repo.get("key"),
+            "target_repo_name": repo.get("name"),
             "sha256": digest,
+            "signature_b64": sig_b64,
+            "public_key_b64": pub_b64,
+            "notary_did": did,
+            "algorithm": "ed25519",
+            "status": status,
+            "http": http_code,
+            "ms": ms,
             "created_at": ts,
         })
 
@@ -730,7 +808,7 @@ async def _startup():
     _refresh_keys = ("name", "github_url", "branch", "description",
                      "tech_stack", "capabilities", "layer", "role",
                      "adapters_declared", "entity_id", "resolved_questions",
-                     "notes", "is_trust_anchor")
+                     "notes", "is_trust_anchor", "preview_url", "auth_type")
     for repo in repositories_docs():
         valid_ids.add(repo["id"])
         insert_only = {k: v for k, v in repo.items() if k not in _refresh_keys}

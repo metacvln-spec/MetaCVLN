@@ -14,6 +14,7 @@ import Registry from "./pages/Registry";
 import AgentFactory from "./pages/AgentFactory";
 import DecisionSystem from "./pages/DecisionSystem";
 import EvidenceAudit from "./pages/EvidenceAudit";
+import Notarizations from "./pages/Notarizations";
 import CVLBrain from "./pages/CVLBrain";
 import "./App.css";
 
@@ -55,6 +56,7 @@ export default function App() {
             <Route path="/agents" element={<AgentFactory />} />
             <Route path="/decisions" element={<DecisionSystem />} />
             <Route path="/evidence" element={<EvidenceAudit />} />
+            <Route path="/notarizations" element={<Notarizations />} />
             <Route path="/brain" element={<CVLBrain />} />
           </Route>
         </Routes>
