@@ -11,6 +11,7 @@ const NAV = [
   { to: "/ops", label: "Operations OS", scope: "ops_os" },
   { to: "/knowledge", label: "Knowledge OS", scope: "knowledge_os" },
   { to: "/ecosystem", label: "Work Graph", scope: "work_graph" },
+  { to: "/registry", label: "Registry", scope: "registry" },
   { to: "/agents", label: "Agent Factory", scope: "agent_factory" },
   { to: "/decisions", label: "Decision System", scope: "decisions" },
   { to: "/evidence", label: "Evidence & Audit", scope: "evidence" },

@@ -10,6 +10,7 @@ import LegalOS from "./pages/LegalOS";
 import OpsOS from "./pages/OpsOS";
 import KnowledgeOS from "./pages/KnowledgeOS";
 import Ecosystem from "./pages/Ecosystem";
+import Registry from "./pages/Registry";
 import AgentFactory from "./pages/AgentFactory";
 import DecisionSystem from "./pages/DecisionSystem";
 import EvidenceAudit from "./pages/EvidenceAudit";
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="/ops" element={<OpsOS />} />
             <Route path="/knowledge" element={<KnowledgeOS />} />
             <Route path="/ecosystem" element={<Ecosystem />} />
+            <Route path="/registry" element={<Registry />} />
             <Route path="/agents" element={<AgentFactory />} />
             <Route path="/decisions" element={<DecisionSystem />} />
             <Route path="/evidence" element={<EvidenceAudit />} />

@@ -19,6 +19,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 
 from seed_data import build_seed_data
+from registry_data import repositories_docs
 
 # ------------------------------------------------------------------
 # Config
@@ -249,6 +250,82 @@ async def list_capabilities(user: dict = Depends(get_current_user)):
 @api.get("/alerts")
 async def list_alerts(user: dict = Depends(get_current_user)):
     return await db.alerts.find({}, {"_id": 0}).sort("timestamp", -1).to_list(200)
+
+
+# ------------------------------------------------------------------
+# Registry — real CVLN ecosystem source repositories (integrate, do not rebuild)
+# ------------------------------------------------------------------
+class RegistryConfigBody(BaseModel):
+    preview_url: Optional[str] = None
+    auth_type: Optional[str] = None  # api_key / bearer / mtls / none
+    api_key: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@api.get("/registry/repositories")
+async def list_repositories(user: dict = Depends(get_current_user)):
+    docs = await db.repositories.find({}, {"_id": 0, "api_key": 0}).to_list(50)
+    return {"repositories": docs, "count": len(docs)}
+
+
+@api.patch("/registry/repositories/{repo_id}")
+async def config_repository(repo_id: str, body: RegistryConfigBody,
+                             user: dict = Depends(get_current_user)):
+    repo = await db.repositories.find_one({"id": repo_id})
+    if not repo:
+        raise HTTPException(404, "Repository not found")
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    if upd:
+        await db.repositories.update_one({"id": repo_id}, {"$set": upd})
+    await write_evidence(user, "registry.config.update", "repository", repo_id,
+                          input_data={"fields": list(upd.keys())})
+    return {"ok": True, "updated": list(upd.keys())}
+
+
+@api.post("/registry/repositories/{repo_id}/ping")
+async def ping_repository(repo_id: str, user: dict = Depends(get_current_user)):
+    import asyncio
+    import time
+    import requests as _rq
+    repo = await db.repositories.find_one({"id": repo_id})
+    if not repo:
+        raise HTTPException(404, "Repository not found")
+    url = repo.get("preview_url") or repo.get("github_url")
+    headers = {}
+    if repo.get("auth_type") == "api_key" and repo.get("api_key"):
+        headers["X-API-Key"] = repo["api_key"]
+    elif repo.get("auth_type") == "bearer" and repo.get("api_key"):
+        headers["Authorization"] = f"Bearer {repo['api_key']}"
+
+    def _do():
+        t0 = time.time()
+        try:
+            r = _rq.get(url, headers=headers, timeout=6, allow_redirects=True)
+            return r.status_code, int((time.time() - t0) * 1000), None
+        except Exception as e:
+            return None, int((time.time() - t0) * 1000), str(e)[:200]
+
+    http_code, ms, err = await asyncio.to_thread(_do)
+    if err:
+        status = "ERROR"
+    elif http_code is not None and http_code < 500:
+        status = "CONNECTED"
+    else:
+        status = "ERROR"
+
+    upd = {
+        "last_ping": datetime.now(timezone.utc).isoformat(),
+        "last_ping_status": status,
+        "last_ping_http": http_code,
+        "last_ping_ms": ms,
+        "last_ping_error": err,
+        "adapter_status": status if status == "CONNECTED" else repo.get("adapter_status", "NOT_CONNECTED"),
+    }
+    await db.repositories.update_one({"id": repo_id}, {"$set": upd})
+    await write_evidence(user, "registry.ping", "repository", repo_id,
+                          input_data={"url": url},
+                          output_data={"status": status, "http": http_code, "ms": ms})
+    return {"status": status, "http": http_code, "ms": ms, "url": url, "error": err}
 
 
 # ------------------------------------------------------------------
@@ -559,6 +636,14 @@ async def _startup():
             if items:
                 await db[coll].insert_many(items)
         log.info("Ecosystem seed loaded")
+
+    # Idempotent registry seed for real CVLN source repos
+    for repo in repositories_docs():
+        await db.repositories.update_one(
+            {"id": repo["id"]},
+            {"$setOnInsert": repo},
+            upsert=True,
+        )
 
 
 @app.on_event("shutdown")
