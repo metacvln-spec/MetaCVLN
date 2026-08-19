@@ -295,11 +295,32 @@ import hashlib as _hashlib
 
 
 async def _get_or_create_notary_key():
-    """Meta CVLN OS holds an Ed25519 keypair used to notarize until the
-    external FREKCORE notarize endpoint contract is published."""
+    """Meta CVLN OS holds an Ed25519 keypair. Private key is Fernet-encrypted
+    at rest using ENCRYPTION_SECRET. Fail closed if secret missing."""
+    from cryptography.fernet import Fernet, InvalidToken
+    secret = os.environ.get("ENCRYPTION_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(500, "ENCRYPTION_SECRET missing — refusing to touch notary key")
+    fernet = Fernet(secret.encode())
     doc = await db.system_keys.find_one({"name": "meta-cvln-notary"})
     if doc:
-        priv = Ed25519PrivateKey.from_private_bytes(_b64.b64decode(doc["private_b64"]))
+        # Migrate legacy plaintext key on-the-fly (one-time)
+        if doc.get("encrypted") is not True:
+            legacy_b64 = doc["private_b64"]
+            enc = fernet.encrypt(legacy_b64.encode()).decode()
+            await db.system_keys.update_one(
+                {"name": "meta-cvln-notary"},
+                {"$set": {"private_enc": enc, "encrypted": True},
+                 "$unset": {"private_b64": ""}}
+            )
+            priv_raw = _b64.b64decode(legacy_b64)
+        else:
+            try:
+                priv_b64 = fernet.decrypt(doc["private_enc"].encode()).decode()
+                priv_raw = _b64.b64decode(priv_b64)
+            except InvalidToken:
+                raise HTTPException(500, "ENCRYPTION_SECRET does not match stored key")
+        priv = Ed25519PrivateKey.from_private_bytes(priv_raw)
         return priv, doc["public_b64"], doc.get("did", "did:meta-cvln:notary")
     priv = Ed25519PrivateKey.generate()
     priv_raw = priv.private_bytes(
@@ -312,13 +333,16 @@ async def _get_or_create_notary_key():
         format=serialization.PublicFormat.Raw,
     )
     pub_b64 = _b64.b64encode(pub_raw).decode()
+    priv_b64 = _b64.b64encode(priv_raw).decode()
+    enc = fernet.encrypt(priv_b64.encode()).decode()
     did = f"did:meta-cvln:{_hashlib.sha256(pub_raw).hexdigest()[:16]}"
     await db.system_keys.insert_one({
         "name": "meta-cvln-notary",
         "algorithm": "ed25519",
         "did": did,
         "public_b64": pub_b64,
-        "private_b64": _b64.b64encode(priv_raw).decode(),
+        "private_enc": enc,
+        "encrypted": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     return priv, pub_b64, did
@@ -1164,27 +1188,50 @@ async def decide(decision_id: str, body: DecisionAction, user: dict = Depends(ge
         raise HTTPException(404, "Decision not found")
     if body.action not in ("approve", "reject", "edit", "escalate", "pause", "rollback"):
         raise HTTPException(400, "Invalid action")
+    # Separation of duties: requester cannot be their own approver on approve/reject
+    owner = (d.get("owner_email") or "").lower()
+    if body.action in ("approve", "reject") and owner and owner == user["email"].lower() \
+       and user["role"] != "admin":
+        raise HTTPException(403, "Separation of duties: requester cannot approve their own decision")
     new_status = {
-        "approve": "approved",
-        "reject": "rejected",
-        "edit": "editing",
-        "escalate": "escalated",
-        "pause": "paused",
-        "rollback": "rolled_back",
+        "approve": "approved", "reject": "rejected", "edit": "editing",
+        "escalate": "escalated", "pause": "paused", "rollback": "rolled_back",
     }[body.action]
+    ts = datetime.now(timezone.utc).isoformat()
     await db.decisions.update_one(
         {"id": decision_id},
         {"$set": {
             "status": new_status,
             "resolved_by": {"id": user["id"], "email": user["email"], "role": user["role"]},
-            "resolved_at": datetime.now(timezone.utc).isoformat(),
+            "resolved_at": ts,
             "resolution_comment": body.comment,
         }},
     )
     await write_evidence(user, f"decision.{body.action}", "decision", decision_id,
-                          input_data={"comment": body.comment}, output_data={"status": new_status},
+                          input_data={"comment": body.comment},
+                          output_data={"status": new_status},
                           approval=body.action)
-    return {"ok": True, "status": new_status}
+    # Sign the decision event on the bus (Phase 1.2)
+    event_id = str(uuid.uuid4())
+    canonical = f"{event_id}|decision.{body.action}|{decision_id}|{ts}"
+    sig = await _sign_payload(canonical)
+    signed = {
+        "contract": "event", "version": "1.1",
+        "id": event_id, "trace_id": decision_id,
+        "type": f"decision.{body.action}",
+        "source_system": "meta-cvln-os", "subject_type": "decision", "subject_id": decision_id,
+        "actor": {"id": user["id"], "email": user["email"], "role": user["role"],
+                  "authority_scope": user.get("authority_scope")},
+        "payload": {"status": new_status, "comment": body.comment,
+                     "requester_email": owner, "approver_email": user["email"]},
+        "priority": 4, "confidence": 1.0, "signed": True,
+        "signature_b64": sig["signature_b64"], "public_key_b64": sig["public_key_b64"],
+        "key_id": sig["key_id"], "signed_at": sig["signed_at"], "sha256": sig["sha256"],
+        "timestamp": ts,
+    }
+    await db.signed_events.insert_one(dict(signed))
+    return {"ok": True, "status": new_status, "signed_event_id": event_id,
+            "key_id": sig["key_id"]}
 
 
 # ------------------------------------------------------------------
@@ -1487,6 +1534,62 @@ async def _startup():
         )
     # Remove stale repos that are no longer in the registry list
     await db.repositories.delete_many({"id": {"$nin": list(valid_ids)}})
+
+    # Phase 3 — Boot-time capability discovery (non-blocking)
+    import asyncio as _asyncio
+    async def _boot_discover():
+        try:
+            import requests as _rq
+            import time as _time
+            for repo in await db.repositories.find({}, {"_id": 0}).to_list(50):
+                base = repo.get("preview_url")
+                if not base:
+                    await db.repositories.update_one(
+                        {"id": repo["id"]},
+                        {"$set": {"lifecycle_status": "UNKNOWN",
+                                   "discovery_at": datetime.now(timezone.utc).isoformat(),
+                                   "discovery_reason": "no_preview_url"}}
+                    )
+                    continue
+                url = base.rstrip("/") + "/api/capabilities"
+                t0 = _time.time()
+                try:
+                    r = await _asyncio.to_thread(_rq.get, url, timeout=6)
+                    ms = int((_time.time() - t0) * 1000)
+                    if r.status_code < 400:
+                        try:
+                            data = r.json()
+                            lifecycle = "HEALTHY" if isinstance(data, list) else "DEGRADED"
+                        except Exception:
+                            data, lifecycle = [], "DEGRADED"
+                    elif r.status_code == 404:
+                        data, lifecycle = [], "DEGRADED"
+                    else:
+                        data, lifecycle = [], "DEGRADED"
+                    await db.repositories.update_one(
+                        {"id": repo["id"]},
+                        {"$set": {
+                            "lifecycle_status": lifecycle,
+                            "discovery_at": datetime.now(timezone.utc).isoformat(),
+                            "discovery_http": r.status_code,
+                            "discovery_ms": ms,
+                            "discovered_capabilities": data if isinstance(data, list) else [],
+                            "discovered_capabilities_count": len(data) if isinstance(data, list) else 0,
+                            "discovery_reason": "boot" if r.status_code == 404 else "boot_ok",
+                        }}
+                    )
+                except Exception as e:
+                    await db.repositories.update_one(
+                        {"id": repo["id"]},
+                        {"$set": {"lifecycle_status": "UNAVAILABLE",
+                                   "discovery_at": datetime.now(timezone.utc).isoformat(),
+                                   "discovery_error": str(e)[:200]}}
+                    )
+            log.info("boot discovery complete")
+        except Exception as e:
+            log.exception(f"boot discovery failed: {e}")
+
+    _asyncio.create_task(_boot_discover())
 
 
 @app.on_event("shutdown")
